@@ -198,17 +198,22 @@ export const useOpenCogStore = create<OpenCogState>()(
       },
 
       connectToCogServer: async () => {
-        const { cogServer, cogServerConfig } = get();
+        const { cogServer, cogServerConfig, useMockServer } = get();
 
         if (!cogServerConfig) {
           throw new Error("CogServer configuration not set");
         }
 
-        if (cogServer && cogServer instanceof MockCogServerClient) {
+        // Check if we need to create a real client (currently using mock)
+        if (useMockServer && cogServer) {
           // Need to create real client
           const realServer = new CogServerClient(cogServerConfig);
           await realServer.connect();
-          set({ cogServer: realServer, cogServerConnected: true });
+          set({
+            cogServer: realServer,
+            cogServerConnected: true,
+            useMockServer: false,
+          });
         } else if (cogServer) {
           await cogServer.connect();
           set({ cogServerConnected: true });

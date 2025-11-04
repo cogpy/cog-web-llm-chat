@@ -94,8 +94,15 @@ export class AtomeseParser {
 
       const node: AtomNode = { type, children };
 
-      // Extract name from first child if it's a simple node
-      if (children.length > 0 && !children[0].children) {
+      // Extract name from first child if it's a simple node and type is a Node (not Link)
+      // Only do this for Node types, not Link types which have multiple children
+      if (
+        children.length > 0 &&
+        !children[0].children &&
+        (type === AtomType.CONCEPT_NODE ||
+          type === AtomType.PREDICATE_NODE ||
+          type === AtomType.VARIABLE_NODE)
+      ) {
         node.name = children[0].name;
         node.children = children.slice(1);
       }

@@ -125,8 +125,18 @@ Provide a clear, natural language explanation of what this expression means.`;
 
   private async callLLM(prompt: string): Promise<string> {
     // This will be implemented to call the actual LLM
-    // For now, return a placeholder
-    return prompt;
+    // The LLM API should be set via setLLMApi before using natural language translations
+    if (!this.llmApi) {
+      throw new Error(
+        "LLM API not configured. Natural language translation requires an LLM.",
+      );
+    }
+
+    // TODO: Implement actual LLM call when LLM API is available
+    // For now, return a descriptive error
+    throw new Error(
+      "LLM integration not yet implemented. Please use direct Atomese/MeTTa conversion.",
+    );
   }
 
   private atomToMetta(atomese: string): TranslationResponse {

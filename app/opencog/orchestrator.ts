@@ -320,15 +320,25 @@ export class AgentOrchestrator {
       // Get plan from planning agent
       await this.assignTask(task.id, planningAgent.id);
 
-      // Wait for completion (simplified - in real impl would be async)
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      const completedTask = this.tasks.get(task.id);
-      if (completedTask?.result) {
-        return completedTask.result;
+      // Wait for task completion by polling status
+      const maxAttempts = 100;
+      const pollInterval = 100;
+      for (let i = 0; i < maxAttempts; i++) {
+        const currentTask = this.tasks.get(task.id);
+        if (currentTask?.status === TaskStatus.COMPLETED) {
+          return currentTask.result || "Request processed successfully";
+        }
+        if (currentTask?.status === TaskStatus.FAILED) {
+          throw new Error(
+            `Task failed: ${currentTask.result || "Unknown error"}`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
       }
+
+      throw new Error("Task timeout - task did not complete in time");
     }
 
-    return "Request processed";
+    return "Request processed (no planning agent available)";
   }
 }
