@@ -37,6 +37,7 @@ export enum StoreKey {
   Prompt = "prompt-store",
   Update = "chat-update",
   Sync = "sync",
+  OpenCog = "opencog-store",
 }
 
 export const DEFAULT_SIDEBAR_WIDTH = 320;
