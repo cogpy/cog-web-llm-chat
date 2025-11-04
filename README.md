@@ -26,6 +26,7 @@
 - **Vision Model Support**: Chat with AI by uploading and sending images, making it easy to get insights and answers based on visual content.
 - **User-Friendly Interface**: Enjoy the intuitive and feature-rich user interface, complete with markdown support, dark mode, and a responsive design optimized for various screen sizes.
 - **Custom Models**: Connect to any custom language model on you local environment through [MLC-LLM](https://llm.mlc.ai/). For detail, check the [Use Custom Models](#use-custom-models) section.
+- **OpenCog Integration**: Multi-agent orchestration system with natural language translation to/from Atomese and MeTTa knowledge representation languages. See [OpenCog Integration](docs/OPENCOG_INTEGRATION.md) for details.
 - **Open Source and Customizable**: Build and customize your own AI-powered applications with our open-source framework.
 
 WebLLM Chat is a pioneering initiative that combines the robust backend capabilities of WebLLM with the user-friendly interface of NextChat. As a part of the broader MLC.ai family, this project contributes to our mission of democratizing AI technology by making powerful tools accessible directly to end-users. By integrating with NextChat, WebLLM Chat not only enhances the chatting experience but also broadens the scope for deployment of self-hosted and customizable language models.
