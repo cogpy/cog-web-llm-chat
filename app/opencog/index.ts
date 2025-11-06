@@ -10,6 +10,9 @@ export * from "./translator";
 export * from "./cogserver";
 export * from "./agents";
 export * from "./orchestrator";
+export * from "./reasoning";
+export * from "./memory";
+export * from "./knowledge";
 
 import { AgentOrchestrator } from "./orchestrator";
 import {

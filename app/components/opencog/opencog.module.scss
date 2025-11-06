@@ -393,3 +393,340 @@
     color: var(--text-color-secondary);
   }
 }
+
+// Knowledge Base Manager
+.knowledgeManager {
+  padding: 16px;
+
+  h4 {
+    margin-top: 0;
+    margin-bottom: 16px;
+  }
+
+  h5 {
+    margin: 16px 0 8px 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+}
+
+.atomSpaceStats {
+  background: var(--hover-color);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  gap: 16px;
+}
+
+.statItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.statLabel {
+  font-size: 12px;
+  color: var(--text-color-secondary);
+}
+
+.statValue {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.managerSection {
+  margin-bottom: 20px;
+}
+
+.exportControls,
+.importControls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.formatSelect {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--border-in-light);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--text-color);
+
+  @media (prefers-color-scheme: dark) {
+    background: var(--black);
+    border-color: var(--border-in-dark);
+  }
+}
+
+.exportButton,
+.importButton {
+  padding: 8px 16px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+
+  &:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.clearButton {
+  padding: 8px 16px;
+  background: #ff6b6b;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+
+  &:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.managerMessage {
+  padding: 12px;
+  background: #51cf66;
+  color: white;
+  border-radius: 6px;
+  margin-top: 16px;
+  font-size: 14px;
+}
+
+// Query Builder
+.queryBuilder {
+  padding: 16px;
+
+  h4 {
+    margin-top: 0;
+    margin-bottom: 16px;
+  }
+
+  h5 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+}
+
+.queryControls {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.controlGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-color-secondary);
+  }
+
+  select,
+  input {
+    padding: 8px;
+    border: 1px solid var(--border-in-light);
+    border-radius: 6px;
+    background: var(--white);
+    color: var(--text-color);
+
+    @media (prefers-color-scheme: dark) {
+      background: var(--black);
+      border-color: var(--border-in-dark);
+    }
+  }
+}
+
+.criteriaList {
+  margin-bottom: 20px;
+}
+
+.criteriaHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.addButton {
+  padding: 6px 12px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+.noCriteria {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-color-secondary);
+  background: var(--hover-color);
+  border-radius: 8px;
+}
+
+.criterionCard {
+  background: var(--hover-color);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.criterionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.removeButton {
+  background: #ff6b6b;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+.criterionFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-color-secondary);
+  }
+
+  select,
+  input {
+    padding: 8px;
+    border: 1px solid var(--border-in-light);
+    border-radius: 6px;
+    background: var(--white);
+    color: var(--text-color);
+    font-size: 14px;
+
+    @media (prefers-color-scheme: dark) {
+      background: var(--black);
+      border-color: var(--border-in-dark);
+    }
+  }
+}
+
+.queryActions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.executeButton {
+  flex: 1;
+  padding: 10px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+
+  &:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.queryResults {
+  h5 {
+    margin-bottom: 12px;
+  }
+}
+
+.resultsList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.resultCard {
+  background: var(--hover-color);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 14px;
+}
+
+.resultHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.resultType {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.resultScore {
+  font-size: 12px;
+  color: var(--text-color-secondary);
+}
+
+.resultName {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.resultTruth,
+.resultChildren {
+  font-size: 12px;
+  color: var(--text-color-secondary);
+  margin-top: 4px;
+}
