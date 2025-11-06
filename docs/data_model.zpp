@@ -1,0 +1,437 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ WebLLM Chat - Data Model Specification (Z++)                                │
+│ Formal specification of data structures and invariants                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 1: BASE TYPES AND ENUMERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+[MessageRole]
+  MessageRole ::= system | user | assistant
+
+[Model]
+  Model == seq char
+  
+  -- Invariant: Model must be a valid model identifier
+  valid_model: Model → 𝔹
+  ∀ m: Model • valid_model(m) ⟺ 
+    m ∈ {DEFAULT_MODELS} ∨ (length(m) > 0 ∧ is_custom_model(m))
+
+[ModelClient]
+  ModelClient ::= WEBLLM | MLCLLM_API
+
+[Theme]
+  Theme ::= Auto | Dark | Light
+
+[CacheType]
+  CacheType ::= Cache | IndexDB
+
+[SubmitKey]
+  SubmitKey ::= Enter | CtrlEnter | ShiftEnter | AltEnter | MetaEnter
+
+[ChatCompletionFinishReason]
+  ChatCompletionFinishReason ::= stop | length | tool_calls | content_filter | error
+
+[AgentStatus]
+  AgentStatus ::= IDLE | BUSY | ERROR | OFFLINE
+
+[MessageType]
+  MessageType ::= TASK | RESPONSE | QUERY | BROADCAST | COMMAND
+
+[TaskStatus]
+  TaskStatus ::= PENDING | ASSIGNED | IN_PROGRESS | COMPLETED | FAILED | CANCELLED
+
+[AtomType]
+  AtomType ::= CONCEPT_NODE | PREDICATE_NODE | VARIABLE_NODE | LIST_LINK | 
+               INHERITANCE_LINK | SIMILARITY_LINK | EVALUATION_LINK | 
+               IMPLICATION_LINK | AND_LINK | OR_LINK | NOT_LINK
+
+[Format]
+  Format ::= NATURAL_LANGUAGE | ATOMESE | METTA | SCHEME
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 2: CORE DATA STRUCTURES
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ MultimodalContent ────────────────────────────────────────────────────────┐
+│ Represents content that can be text or image                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MultimodalContent]
+  content_type: {text, image_url}
+  text: seq char
+  image_url: seq char
+  width: ℕ
+  height: ℕ
+  
+  -- Invariants
+  text_invariant: content_type = text ⟹ length(text) > 0
+  image_invariant: content_type = image_url ⟹ 
+    length(image_url) > 0 ∧ width > 0 ∧ height > 0
+
+┌─ TruthValue ───────────────────────────────────────────────────────────────┐
+│ Probabilistic truth value used in OpenCog reasoning                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[TruthValue]
+  strength: ℝ
+  confidence: ℝ
+  
+  -- Invariants: Both values must be in [0.0, 1.0]
+  strength_range: 0.0 ≤ strength ≤ 1.0
+  confidence_range: 0.0 ≤ confidence ≤ 1.0
+
+┌─ CompletionUsage ──────────────────────────────────────────────────────────┐
+│ Token usage statistics for LLM completions                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CompletionUsage]
+  prompt_tokens: ℕ
+  completion_tokens: ℕ
+  total_tokens: ℕ
+  
+  -- Invariant: Total must equal sum of prompt and completion
+  total_consistency: total_tokens = prompt_tokens + completion_tokens
+
+┌─ ChatMessage ──────────────────────────────────────────────────────────────┐
+│ Individual message in a chat conversation                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ChatMessage]
+  id: seq char
+  date: seq char
+  role: MessageRole
+  content: seq char ∪ seq MultimodalContent
+  streaming: 𝔹
+  isError: 𝔹
+  stopReason: ChatCompletionFinishReason
+  model: Model
+  usage: CompletionUsage
+  
+  -- Invariants
+  id_nonempty: length(id) > 0
+  date_valid: is_valid_date_string(date)
+  content_nonempty: 
+    (content ∈ seq char ⟹ length(content) ≥ 0) ∧
+    (content ∈ seq MultimodalContent ⟹ length(content) > 0)
+  error_state: isError = true ⟹ stopReason = error
+  streaming_state: streaming = true ⟹ stopReason ≠ stop
+
+┌─ ChatStat ─────────────────────────────────────────────────────────────────┐
+│ Statistics for a chat session                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ChatStat]
+  tokenCount: ℕ
+  wordCount: ℕ
+  charCount: ℕ
+  
+  -- Invariants: Counts must be monotonic with text length
+  word_token_relation: wordCount ≤ tokenCount * 2  -- Approximate bound
+  char_word_relation: charCount ≥ wordCount  -- At least 1 char per word
+
+┌─ Template ─────────────────────────────────────────────────────────────────┐
+│ Template for structured prompts                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[Template]
+  id: seq char
+  name: seq char
+  description: seq char
+  content: seq char
+  createdAt: ℕ
+  
+  -- Invariants
+  id_unique: length(id) > 0
+  name_nonempty: length(name) > 0
+  timestamp_valid: createdAt > 0
+
+┌─ ChatSession ──────────────────────────────────────────────────────────────┐
+│ Complete chat session with messages and metadata                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ChatSession]
+  id: seq char
+  topic: seq char
+  memoryPrompt: seq char
+  messages: seq ChatMessage
+  stat: ChatStat
+  lastUpdate: ℕ
+  lastSummarizeIndex: ℕ
+  clearContextIndex: ℕ
+  isGenerating: 𝔹
+  template: Template
+  
+  -- Invariants
+  id_unique: length(id) > 0
+  topic_nonempty: length(topic) > 0
+  timestamp_valid: lastUpdate > 0
+  summarize_index_bound: lastSummarizeIndex ≤ length(messages)
+  clear_index_bound: clearContextIndex ≤ length(messages)
+  message_ordering: 
+    ∀ i, j: ℕ • i < j < length(messages) ⟹ 
+      timestamp(messages[i]) ≤ timestamp(messages[j])
+  generation_state: isGenerating = true ⟹ 
+    ∃ m: ChatMessage • m ∈ messages ∧ m.streaming = true
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 3: CONFIGURATION DATA STRUCTURES
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ ModelConfig ──────────────────────────────────────────────────────────────┐
+│ Configuration parameters for LLM models                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ModelConfig]
+  model: Model
+  temperature: ℝ
+  context_window_size: ℕ
+  top_p: ℝ
+  max_tokens: ℕ
+  presence_penalty: ℝ
+  frequency_penalty: ℝ
+  mlc_endpoint: seq char
+  
+  -- Invariants: Parameter ranges
+  temperature_range: 0.0 ≤ temperature ≤ 2.0
+  top_p_range: 0.0 ≤ top_p ≤ 1.0
+  context_window_positive: context_window_size > 0
+  max_tokens_bound: 0 < max_tokens ≤ context_window_size
+  presence_penalty_range: -2.0 ≤ presence_penalty ≤ 2.0
+  frequency_penalty_range: -2.0 ≤ frequency_penalty ≤ 2.0
+  endpoint_valid: mlc_endpoint ≠ "" ⟹ is_valid_url(mlc_endpoint)
+
+┌─ ModelRecord ──────────────────────────────────────────────────────────────┐
+│ Metadata for an available LLM model                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ModelRecord]
+  name: seq char
+  display_name: seq char
+  provider: seq char
+  size: seq char
+  quantization: seq char
+  family: seq char
+  recommended_config: ModelConfig
+  
+  -- Invariants
+  name_unique: length(name) > 0
+  display_nonempty: length(display_name) > 0
+
+┌─ ConfigType ───────────────────────────────────────────────────────────────┐
+│ Application-wide configuration                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ConfigType]
+  lastUpdate: ℕ
+  submitKey: SubmitKey
+  avatar: seq char
+  fontSize: ℕ
+  theme: Theme
+  tightBorder: 𝔹
+  sendPreviewBubble: 𝔹
+  enableAutoGenerateTitle: 𝔹
+  sidebarWidth: ℕ
+  disablePromptHint: 𝔹
+  hideBuiltinTemplates: 𝔹
+  sendMemory: 𝔹
+  historyMessageCount: ℕ
+  compressMessageLengthThreshold: ℕ
+  enableInjectSystemPrompts: 𝔹
+  template: seq char
+  modelClientType: ModelClient
+  models: seq ModelRecord
+  cacheType: CacheType
+  logLevel: seq char
+  enableThinking: 𝔹
+  modelConfig: ModelConfig
+  
+  -- Invariants
+  timestamp_valid: lastUpdate > 0
+  font_size_range: 12 ≤ fontSize ≤ 32
+  sidebar_width_range: 100 ≤ sidebarWidth ≤ 500
+  history_count_bound: historyMessageCount ≥ 0
+  compress_threshold_positive: compressMessageLengthThreshold > 0
+  models_nonempty: length(models) > 0
+  log_level_valid: logLevel ∈ {ERROR, WARN, INFO, DEBUG, SILENT}
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 4: OPENCOG DATA STRUCTURES
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ Agent ────────────────────────────────────────────────────────────────────┐
+│ Autonomous agent in the multi-agent system                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[Agent]
+  id: seq char
+  name: seq char
+  role: seq char
+  status: AgentStatus
+  capabilities: seq (seq char)
+  context: seq char → any
+  
+  -- Invariants
+  id_unique: length(id) > 0
+  name_nonempty: length(name) > 0
+  role_nonempty: length(role) > 0
+  capabilities_nonempty: length(capabilities) > 0
+  status_offline_cleanup: status = OFFLINE ⟹ context = ∅
+
+┌─ Task ─────────────────────────────────────────────────────────────────────┐
+│ Task that can be assigned to agents                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[Task]
+  id: seq char
+  description: seq char
+  assignedTo: seq char
+  status: TaskStatus
+  priority: ℕ
+  dependencies: seq (seq char)
+  result: any
+  createdAt: ℕ
+  updatedAt: ℕ
+  
+  -- Invariants
+  id_unique: length(id) > 0
+  description_nonempty: length(description) > 0
+  priority_range: 1 ≤ priority ≤ 10
+  timestamp_ordering: createdAt ≤ updatedAt
+  assignment_consistency: 
+    status ∈ {ASSIGNED, IN_PROGRESS} ⟹ assignedTo ≠ ""
+  completion_result: 
+    status = COMPLETED ⟹ result ≠ null
+  dependency_acyclic: 
+    ∀ t: Task • t.id ∉ transitive_closure(t.dependencies)
+
+┌─ AgentMessage ─────────────────────────────────────────────────────────────┐
+│ Message exchanged between agents                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[AgentMessage]
+  id: seq char
+  senderId: seq char
+  receiverId: seq char
+  content: seq char
+  timestamp: ℕ
+  type: MessageType
+  metadata: seq char → any
+  
+  -- Invariants
+  id_unique: length(id) > 0
+  sender_nonempty: length(senderId) > 0
+  content_nonempty: length(content) > 0
+  timestamp_valid: timestamp > 0
+  broadcast_consistency: 
+    type = BROADCAST ⟹ receiverId = ""
+  targeted_consistency: 
+    type ≠ BROADCAST ⟹ length(receiverId) > 0
+
+┌─ AtomNode ─────────────────────────────────────────────────────────────────┐
+│ Node in the AtomSpace knowledge graph                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[AtomNode]
+  type: AtomType
+  name: seq char
+  value: any
+  children: seq AtomNode
+  truthValue: TruthValue
+  
+  -- Invariants
+  node_name: type ∈ {CONCEPT_NODE, PREDICATE_NODE, VARIABLE_NODE} ⟹ 
+    length(name) > 0
+  link_children: type ∈ {LIST_LINK, INHERITANCE_LINK, SIMILARITY_LINK, 
+                         EVALUATION_LINK, IMPLICATION_LINK, AND_LINK, 
+                         OR_LINK, NOT_LINK} ⟹ 
+    length(children) > 0
+  unary_link: type = NOT_LINK ⟹ length(children) = 1
+  binary_link: type ∈ {INHERITANCE_LINK, SIMILARITY_LINK, IMPLICATION_LINK} ⟹ 
+    length(children) = 2
+  acyclic_structure: 
+    ∀ a: AtomNode • a ∉ transitive_children(a)
+
+┌─ MeTTaExpression ──────────────────────────────────────────────────────────┐
+│ MeTTa language expression                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MeTTaExpression]
+  expr_type: {atom, expression, variable}
+  value: seq char ∪ seq MeTTaExpression
+  metadata: seq char → any
+  
+  -- Invariants
+  atom_value: expr_type = atom ⟹ value ∈ seq char ∧ length(value) > 0
+  expression_value: expr_type = expression ⟹ 
+    value ∈ seq MeTTaExpression ∧ length(value) > 0
+  variable_convention: expr_type = variable ⟹ 
+    value ∈ seq char ∧ starts_with(value, "$")
+
+┌─ TranslationRequest ───────────────────────────────────────────────────────┐
+│ Request to translate between knowledge representation formats               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[TranslationRequest]
+  input: seq char
+  sourceFormat: Format
+  targetFormat: Format
+  context: seq char
+  
+  -- Invariants
+  input_nonempty: length(input) > 0
+  different_formats: sourceFormat ≠ targetFormat
+  valid_combination: is_valid_translation_pair(sourceFormat, targetFormat)
+
+┌─ TranslationResponse ──────────────────────────────────────────────────────┐
+│ Result of a translation operation                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[TranslationResponse]
+  output: seq char
+  sourceFormat: Format
+  targetFormat: Format
+  confidence: ℝ
+  explanation: seq char
+  
+  -- Invariants
+  output_nonempty: length(output) > 0
+  confidence_range: 0.0 ≤ confidence ≤ 1.0
+  format_match_request: 
+    ∀ req: TranslationRequest • 
+      sourceFormat = req.sourceFormat ∧ targetFormat = req.targetFormat
+
+┌─ CogServerConfig ──────────────────────────────────────────────────────────┐
+│ Configuration for CogServer connection                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CogServerConfig]
+  host: seq char
+  port: ℕ
+  protocol: {ws, tcp}
+  reconnect: 𝔹
+  reconnectInterval: ℕ
+  
+  -- Invariants
+  host_nonempty: length(host) > 0
+  port_range: 1 ≤ port ≤ 65535
+  reconnect_interval: reconnect = true ⟹ reconnectInterval > 0
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 5: HELPER FUNCTIONS AND PREDICATES
+═══════════════════════════════════════════════════════════════════════════════
+
+[Utility Functions]
+  is_valid_date_string: seq char → 𝔹
+  is_valid_url: seq char → 𝔹
+  is_custom_model: seq char → 𝔹
+  timestamp: ChatMessage → ℕ
+  transitive_closure: seq (seq char) → ℙ(seq char)
+  transitive_children: AtomNode → ℙ AtomNode
+  is_valid_translation_pair: Format × Format → 𝔹
+  starts_with: seq char × seq char → 𝔹
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF DATA MODEL SPECIFICATION
+═══════════════════════════════════════════════════════════════════════════════

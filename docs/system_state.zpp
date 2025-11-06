@@ -1,0 +1,544 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ WebLLM Chat - System State Specification (Z++)                              │
+│ Formal specification of system state and global invariants                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 1: CHAT SYSTEM STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ ChatStore ────────────────────────────────────────────────────────────────┐
+│ Complete state of the chat system                                           │
+│ Manages all chat sessions, messages, and conversation state                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ChatStore]
+  sessions: seq ChatSession
+  currentSessionIndex: ℕ
+  
+  -- State Invariants
+  sessions_nonempty: length(sessions) > 0
+  
+  current_session_valid: 
+    0 ≤ currentSessionIndex < length(sessions)
+  
+  session_ids_unique: 
+    ∀ i, j: ℕ • i ≠ j ∧ i, j < length(sessions) ⟹ 
+      sessions[i].id ≠ sessions[j].id
+  
+  session_timestamps_monotonic: 
+    ∀ i, j: ℕ • i < j < length(sessions) ⟹ 
+      sessions[i].lastUpdate ≤ sessions[j].lastUpdate
+  
+  no_concurrent_generation: 
+    ∀ i, j: ℕ • i ≠ j ∧ i, j < length(sessions) ⟹ 
+      ¬(sessions[i].isGenerating ∧ sessions[j].isGenerating)
+  
+  active_session_generation: 
+    sessions[currentSessionIndex].isGenerating ⟹ 
+      ∃ m: ChatMessage • 
+        m ∈ sessions[currentSessionIndex].messages ∧ 
+        m.streaming = true
+
+┌─ ΞChatStore ───────────────────────────────────────────────────────────────┐
+│ Read-only chat store (state unchanged)                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ΞChatStore]
+  ChatStore
+  ChatStore'
+  
+  sessions' = sessions
+  currentSessionIndex' = currentSessionIndex
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 2: CONFIGURATION STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ ConfigStore ──────────────────────────────────────────────────────────────┐
+│ Application configuration state                                             │
+│ Manages model settings, UI preferences, and global options                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ConfigStore]
+  config: ConfigType
+  
+  -- State Invariants
+  model_exists_in_registry: 
+    config.modelConfig.model ∈ {m.name | m ∈ config.models}
+  
+  compatible_client_model: 
+    config.modelClientType = WEBLLM ⟹ 
+      ∃ m: ModelRecord • 
+        m ∈ config.models ∧ 
+        m.name = config.modelConfig.model ∧
+        m.provider ∈ {WebLLM, MLC}
+  
+  mlc_endpoint_required: 
+    config.modelClientType = MLCLLM_API ⟹ 
+      length(config.modelConfig.mlc_endpoint) > 0 ∧
+      is_valid_url(config.modelConfig.mlc_endpoint)
+  
+  cache_type_compatibility: 
+    config.modelClientType = WEBLLM ⟹ 
+      config.cacheType ∈ {Cache, IndexDB}
+
+┌─ ΞConfigStore ─────────────────────────────────────────────────────────────┐
+│ Read-only config store (state unchanged)                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ΞConfigStore]
+  ConfigStore
+  ConfigStore'
+  
+  config' = config
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 3: OPENCOG MULTI-AGENT STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ OrchestrationState ───────────────────────────────────────────────────────┐
+│ State of the multi-agent orchestration system                               │
+│ Manages agents, tasks, messages, and coordination                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[OrchestrationState]
+  agents: seq char → Agent
+  tasks: seq char → Task
+  messageQueue: seq AgentMessage
+  activeSession: seq char
+  
+  -- State Invariants
+  agent_ids_match_keys: 
+    ∀ id: seq char • id ∈ dom agents ⟹ agents(id).id = id
+  
+  task_ids_match_keys: 
+    ∀ id: seq char • id ∈ dom tasks ⟹ tasks(id).id = id
+  
+  task_assignment_valid: 
+    ∀ t: Task • t ∈ ran tasks ∧ t.assignedTo ≠ "" ⟹ 
+      t.assignedTo ∈ dom agents
+  
+  task_dependencies_exist: 
+    ∀ t: Task • t ∈ ran tasks ⟹ 
+      ∀ dep: seq char • dep ∈ t.dependencies ⟹ dep ∈ dom tasks
+  
+  task_dependency_acyclic: 
+    ∀ t: Task • t ∈ ran tasks ⟹ 
+      t.id ∉ transitive_task_dependencies(t.id)
+  
+  message_sender_exists: 
+    ∀ m: AgentMessage • m ∈ messageQueue ⟹ 
+      m.senderId ∈ dom agents
+  
+  message_receiver_exists: 
+    ∀ m: AgentMessage • m ∈ messageQueue ∧ m.type ≠ BROADCAST ⟹ 
+      m.receiverId ∈ dom agents
+  
+  active_session_exists: 
+    activeSession ≠ "" ⟹ 
+      ∃ t: Task • t ∈ ran tasks ∧ t.id = activeSession
+  
+  agent_status_consistency: 
+    ∀ a: Agent • a ∈ ran agents ⟹ 
+      (a.status = BUSY ⟺ ∃ t: Task • 
+        t ∈ ran tasks ∧ t.assignedTo = a.id ∧ t.status = IN_PROGRESS)
+  
+  capability_based_assignment: 
+    ∀ t: Task • t ∈ ran tasks ∧ t.assignedTo ≠ "" ⟹ 
+      ∃ cap: seq char • 
+        cap ∈ agents(t.assignedTo).capabilities ∧
+        requires_capability(t.description, cap)
+
+┌─ ΞOrchestrationState ──────────────────────────────────────────────────────┐
+│ Read-only orchestration state (state unchanged)                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ΞOrchestrationState]
+  OrchestrationState
+  OrchestrationState'
+  
+  agents' = agents
+  tasks' = tasks
+  messageQueue' = messageQueue
+  activeSession' = activeSession
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 4: KNOWLEDGE REPRESENTATION STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ AtomSpace ────────────────────────────────────────────────────────────────┐
+│ Knowledge graph state (OpenCog AtomSpace)                                   │
+│ Stores atoms with truth values and attention values                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[AtomSpace]
+  atoms: seq AtomNode
+  atomIndex: seq char → ℕ  -- Name to position index
+  
+  -- State Invariants
+  atom_structure_valid: 
+    ∀ a: AtomNode • a ∈ atoms ⟹ is_well_formed_atom(a)
+  
+  atom_children_exist: 
+    ∀ a: AtomNode • a ∈ atoms ∧ length(a.children) > 0 ⟹ 
+      ∀ c: AtomNode • c ∈ a.children ⟹ c ∈ atoms
+  
+  no_cyclic_references: 
+    ∀ a: AtomNode • a ∈ atoms ⟹ 
+      a ∉ transitive_children(a)
+  
+  index_consistency: 
+    ∀ name: seq char • name ∈ dom atomIndex ⟹ 
+      ∃ a: AtomNode • a = atoms[atomIndex(name)] ∧ a.name = name
+  
+  truth_values_bounded: 
+    ∀ a: AtomNode • a ∈ atoms ⟹ 
+      0.0 ≤ a.truthValue.strength ≤ 1.0 ∧ 
+      0.0 ≤ a.truthValue.confidence ≤ 1.0
+
+┌─ ΞAtomSpace ───────────────────────────────────────────────────────────────┐
+│ Read-only AtomSpace (state unchanged)                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ΞAtomSpace]
+  AtomSpace
+  AtomSpace'
+  
+  atoms' = atoms
+  atomIndex' = atomIndex
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 5: REASONING ENGINE STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ PLNState ─────────────────────────────────────────────────────────────────┐
+│ Probabilistic Logic Networks reasoning state                                │
+│ Maintains inference history and confidence calculations                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[PLNState]
+  inferenceHistory: seq (AtomNode × AtomNode × AtomNode)  -- Premise1, Premise2, Conclusion
+  ruleApplications: ℕ
+  averageConfidence: ℝ
+  
+  -- State Invariants
+  inference_atoms_exist: 
+    ∀ (p1, p2, c): (AtomNode × AtomNode × AtomNode) • 
+      (p1, p2, c) ∈ inferenceHistory ⟹ 
+        ∃ as: AtomSpace • p1 ∈ as.atoms ∧ p2 ∈ as.atoms ∧ c ∈ as.atoms
+  
+  confidence_range: 
+    0.0 ≤ averageConfidence ≤ 1.0
+  
+  applications_history_consistency: 
+    ruleApplications = length(inferenceHistory)
+
+┌─ ECANState ────────────────────────────────────────────────────────────────┐
+│ Economic Attention Network state                                            │
+│ Manages short-term importance (STI) and long-term importance (LTI)          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ECANState]
+  atomSTI: seq char → ℤ  -- Atom name to short-term importance
+  atomLTI: seq char → ℤ  -- Atom name to long-term importance
+  attentionalFocus: ℙ(seq char)  -- Set of atom names in focus
+  totalSTI: ℤ
+  totalLTI: ℤ
+  
+  -- State Invariants
+  sti_conservation: 
+    totalSTI = Σ{v | v ∈ ran atomSTI}
+  
+  lti_conservation: 
+    totalLTI = Σ{v | v ∈ ran atomLTI}
+  
+  focus_high_sti: 
+    ∀ name: seq char • name ∈ attentionalFocus ⟹ 
+      atomSTI(name) > ATTENTION_THRESHOLD
+  
+  sti_lti_domains_match: 
+    dom atomSTI = dom atomLTI
+  
+  sti_range: 
+    ∀ v: ℤ • v ∈ ran atomSTI ⟹ MIN_STI ≤ v ≤ MAX_STI
+  
+  lti_range: 
+    ∀ v: ℤ • v ∈ ran atomLTI ⟹ MIN_LTI ≤ v ≤ MAX_LTI
+
+┌─ MOSESState ───────────────────────────────────────────────────────────────┐
+│ Meta-Optimizing Semantic Evolutionary Search state                          │
+│ Maintains population of candidate programs                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MOSESState]
+  population: seq (seq char × ℝ)  -- Program representation and fitness
+  generation: ℕ
+  bestFitness: ℝ
+  averageFitness: ℝ
+  
+  -- State Invariants
+  population_nonempty: 
+    length(population) > 0
+  
+  fitness_consistency: 
+    bestFitness = max{f | (_, f) ∈ population}
+  
+  average_consistency: 
+    averageFitness = (Σ{f | (_, f) ∈ population}) / length(population)
+  
+  best_in_population: 
+    ∃ (prog, fit): (seq char × ℝ) • 
+      (prog, fit) ∈ population ∧ fit = bestFitness
+  
+  fitness_bounded: 
+    ∀ (_, f): (seq char × ℝ) • (_, f) ∈ population ⟹ 
+      0.0 ≤ f ≤ 1.0
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 6: MEMORY SYSTEM STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ MemoryEntry ──────────────────────────────────────────────────────────────┐
+│ Individual memory entry in the memory system                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MemoryEntry]
+  id: seq char
+  content: seq char
+  importance: ℝ
+  timestamp: ℕ
+  accessCount: ℕ
+  lastAccessed: ℕ
+  
+  -- Invariants
+  id_unique: length(id) > 0
+  importance_range: 0.0 ≤ importance ≤ 1.0
+  timestamp_valid: timestamp > 0
+  access_timestamp_ordering: lastAccessed ≥ timestamp
+  access_count_positive: accessCount ≥ 0
+
+┌─ PersistentMemoryState ────────────────────────────────────────────────────┐
+│ Long-term memory storage state                                              │
+│ Stores episodic and procedural memories                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[PersistentMemoryState]
+  shortTermMemory: seq MemoryEntry
+  longTermMemory: seq MemoryEntry
+  memoryIndex: seq char → ℕ
+  
+  -- State Invariants
+  stm_capacity_bound: 
+    length(shortTermMemory) ≤ STM_CAPACITY
+  
+  memory_ids_unique: 
+    ∀ i, j: ℕ • i ≠ j ∧ i < length(shortTermMemory) ∧ j < length(shortTermMemory) ⟹ 
+      shortTermMemory[i].id ≠ shortTermMemory[j].id ∧
+    ∀ i, j: ℕ • i ≠ j ∧ i < length(longTermMemory) ∧ j < length(longTermMemory) ⟹ 
+      longTermMemory[i].id ≠ longTermMemory[j].id
+  
+  stm_ltm_disjoint: 
+    ∀ s: MemoryEntry • s ∈ shortTermMemory ⟹ 
+      ∀ l: MemoryEntry • l ∈ longTermMemory ⟹ s.id ≠ l.id
+  
+  recent_in_stm: 
+    ∀ m: MemoryEntry • m ∈ shortTermMemory ⟹ 
+      m.timestamp > (current_time() - STM_TIME_WINDOW)
+  
+  important_in_ltm: 
+    ∀ m: MemoryEntry • m ∈ longTermMemory ⟹ 
+      m.importance ≥ LTM_IMPORTANCE_THRESHOLD ∨ 
+      m.accessCount ≥ LTM_ACCESS_THRESHOLD
+  
+  index_consistency: 
+    ∀ id: seq char • id ∈ dom memoryIndex ⟹ 
+      (∃ m: MemoryEntry • m ∈ shortTermMemory ∪ longTermMemory ∧ m.id = id)
+
+┌─ AgentLearningState ───────────────────────────────────────────────────────┐
+│ Learning state for individual agents                                        │
+│ Tracks experiences, patterns, and acquired skills                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[AgentLearningState]
+  agentId: seq char
+  experiences: seq (seq char × ℝ)  -- Experience description and reward
+  learnedPatterns: seq (seq char)
+  skills: seq char → ℝ  -- Skill name to proficiency
+  
+  -- State Invariants
+  agent_exists: 
+    ∃ os: OrchestrationState • agentId ∈ dom os.agents
+  
+  experiences_ordered: 
+    ∀ i, j: ℕ • i < j < length(experiences) ⟹ 
+      timestamp(experiences[i]) ≤ timestamp(experiences[j])
+  
+  reward_range: 
+    ∀ (_, r): (seq char × ℝ) • (_, r) ∈ experiences ⟹ 
+      -1.0 ≤ r ≤ 1.0
+  
+  proficiency_range: 
+    ∀ p: ℝ • p ∈ ran skills ⟹ 
+      0.0 ≤ p ≤ 1.0
+  
+  skill_improvement_monotonic: 
+    ∀ s: seq char • s ∈ dom skills ⟹ 
+      skills'(s) ≥ skills(s)  -- Skills don't decrease
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 7: LLM CLIENT STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ WebLLMState ──────────────────────────────────────────────────────────────┐
+│ State of the WebLLM client                                                  │
+│ Manages model initialization and execution state                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[WebLLMState]
+  initialized: 𝔹
+  currentModel: Model
+  engineType: {serviceWorker, webWorker}
+  modelCache: ℙ Model  -- Set of cached models
+  isGenerating: 𝔹
+  
+  -- State Invariants
+  model_cached_if_initialized: 
+    initialized = true ⟹ currentModel ∈ modelCache
+  
+  generating_requires_initialized: 
+    isGenerating = true ⟹ initialized = true
+  
+  engine_type_valid: 
+    engineType ∈ {serviceWorker, webWorker}
+
+┌─ MLCLLMState ──────────────────────────────────────────────────────────────┐
+│ State of the MLC-LLM API client                                             │
+│ Manages connection to external MLC-LLM server                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MLCLLMState]
+  endpoint: seq char
+  connected: 𝔹
+  availableModels: seq Model
+  isGenerating: 𝔹
+  
+  -- State Invariants
+  endpoint_valid: 
+    connected = true ⟹ 
+      length(endpoint) > 0 ∧ is_valid_url(endpoint)
+  
+  generating_requires_connection: 
+    isGenerating = true ⟹ connected = true
+  
+  models_available_when_connected: 
+    connected = true ⟹ length(availableModels) > 0
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 8: GLOBAL SYSTEM STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ SystemState ──────────────────────────────────────────────────────────────┐
+│ Complete system state combining all subsystems                              │
+│ Top-level state schema with cross-cutting invariants                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[SystemState]
+  chatStore: ChatStore
+  configStore: ConfigStore
+  orchestrationState: OrchestrationState
+  atomSpace: AtomSpace
+  plnState: PLNState
+  ecanState: ECANState
+  mosesState: MOSESState
+  memoryState: PersistentMemoryState
+  agentLearning: seq char → AgentLearningState
+  webllmState: WebLLMState
+  mlcllmState: MLCLLMState
+  
+  -- Global Cross-Cutting Invariants
+  
+  client_model_consistency: 
+    configStore.config.modelClientType = WEBLLM ⟹ 
+      webllmState.currentModel = configStore.config.modelConfig.model ∧
+    configStore.config.modelClientType = MLCLLM_API ⟹ 
+      mlcllmState.endpoint = configStore.config.modelConfig.mlc_endpoint
+  
+  single_generation_source: 
+    ¬(webllmState.isGenerating ∧ mlcllmState.isGenerating)
+  
+  generation_state_consistency: 
+    chatStore.sessions[chatStore.currentSessionIndex].isGenerating ⟺ 
+      (webllmState.isGenerating ∨ mlcllmState.isGenerating)
+  
+  agent_learning_registered: 
+    ∀ id: seq char • id ∈ dom agentLearning ⟹ 
+      id ∈ dom orchestrationState.agents
+  
+  atomspace_ecan_consistency: 
+    dom ecanState.atomSTI = {a.name | a ∈ atomSpace.atoms ∧ a.name ≠ ""}
+  
+  memory_agent_correlation: 
+    length(memoryState.longTermMemory) > 0 ⟹ 
+      ∃ a: Agent • a ∈ ran orchestrationState.agents ∧ 
+        a.role = "KnowledgeAgent"
+  
+  reasoning_requires_atomspace: 
+    plnState.ruleApplications > 0 ⟹ 
+      length(atomSpace.atoms) > 0
+  
+  active_task_session_sync: 
+    orchestrationState.activeSession ≠ "" ⟹ 
+      chatStore.sessions[chatStore.currentSessionIndex].isGenerating = true
+
+┌─ ΔSystemState ─────────────────────────────────────────────────────────────┐
+│ System state change (before and after states)                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ΔSystemState]
+  SystemState
+  SystemState'
+
+┌─ ΞSystemState ─────────────────────────────────────────────────────────────┐
+│ Read-only system state (no state change)                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ΞSystemState]
+  SystemState
+  SystemState'
+  
+  chatStore' = chatStore
+  configStore' = configStore
+  orchestrationState' = orchestrationState
+  atomSpace' = atomSpace
+  plnState' = plnState
+  ecanState' = ecanState
+  mosesState' = mosesState
+  memoryState' = memoryState
+  agentLearning' = agentLearning
+  webllmState' = webllmState
+  mlcllmState' = mlcllmState
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 9: HELPER FUNCTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+[Helper Functions]
+  transitive_task_dependencies: seq char → ℙ(seq char)
+  is_well_formed_atom: AtomNode → 𝔹
+  requires_capability: seq char × seq char → 𝔹
+  current_time: → ℕ
+  timestamp: (seq char × ℝ) → ℕ
+
+[Constants]
+  ATTENTION_THRESHOLD: ℤ
+  MIN_STI, MAX_STI: ℤ
+  MIN_LTI, MAX_LTI: ℤ
+  STM_CAPACITY: ℕ
+  STM_TIME_WINDOW: ℕ
+  LTM_IMPORTANCE_THRESHOLD: ℝ
+  LTM_ACCESS_THRESHOLD: ℕ
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF SYSTEM STATE SPECIFICATION
+═══════════════════════════════════════════════════════════════════════════════

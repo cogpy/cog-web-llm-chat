@@ -1,0 +1,967 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ WebLLM Chat - Operations Specification (Z++)                                │
+│ Formal specification of system operations and state transitions             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 1: CHAT SESSION OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ CreateNewSession ─────────────────────────────────────────────────────────┐
+│ Creates a new chat session                                                  │
+│ Pre: System is initialized                                                  │
+│ Post: New session added to sessions list                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CreateNewSession]
+  ΔChatStore
+  template?: Template
+  
+  -- Preconditions
+  length(sessions) < MAX_SESSIONS
+  
+  -- Operation
+  let newSession = ChatSession where
+    newSession.id = fresh_id()
+    newSession.topic = DEFAULT_TOPIC
+    newSession.messages = ⟨⟩
+    newSession.stat.tokenCount = 0
+    newSession.stat.wordCount = 0
+    newSession.stat.charCount = 0
+    newSession.lastUpdate = current_time()
+    newSession.lastSummarizeIndex = 0
+    newSession.isGenerating = false
+    newSession.template = template ∨ createEmptyTemplate()
+  
+  -- Postconditions
+  sessions' = sessions ⌢ ⟨newSession⟩
+  currentSessionIndex' = length(sessions)
+  
+  length(sessions') = length(sessions) + 1
+
+┌─ DeleteSession ────────────────────────────────────────────────────────────┐
+│ Deletes a chat session                                                      │
+│ Pre: Session exists and is not the only session                             │
+│ Post: Session removed, current index adjusted                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[DeleteSession]
+  ΔChatStore
+  sessionId: seq char
+  
+  -- Preconditions
+  ∃ i: ℕ • i < length(sessions) ∧ sessions[i].id = sessionId
+  length(sessions) > 1
+  
+  -- Operation
+  let index = find_session_index(sessionId)
+  
+  -- Postconditions
+  sessions' = remove_at(sessions, index)
+  
+  currentSessionIndex' = 
+    if index < currentSessionIndex then
+      currentSessionIndex - 1
+    else if index = currentSessionIndex ∧ index = length(sessions) - 1 then
+      currentSessionIndex - 1
+    else
+      currentSessionIndex
+  
+  length(sessions') = length(sessions) - 1
+
+┌─ SendMessage ──────────────────────────────────────────────────────────────┐
+│ Adds a user message to the current session                                  │
+│ Pre: Session is not generating, content is non-empty                        │
+│ Post: Message added, session updated                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[SendMessage]
+  ΔChatStore
+  content: seq char ∪ seq MultimodalContent
+  
+  -- Preconditions
+  sessions[currentSessionIndex].isGenerating = false
+  length(content) > 0
+  
+  -- Operation
+  let message = ChatMessage where
+    message.id = fresh_id()
+    message.role = user
+    message.content = content
+    message.date = current_date_string()
+    message.streaming = false
+    message.isError = false
+  
+  let session = sessions[currentSessionIndex]
+  
+  -- Postconditions
+  sessions'[currentSessionIndex].messages = session.messages ⌢ ⟨message⟩
+  sessions'[currentSessionIndex].lastUpdate = current_time()
+  sessions'[currentSessionIndex].stat = update_stats(session.stat, message)
+  
+  ∀ i: ℕ • i ≠ currentSessionIndex ⟹ sessions'[i] = sessions[i]
+
+┌─ StreamAssistantMessage ───────────────────────────────────────────────────┐
+│ Streams an assistant response (incremental updates)                         │
+│ Pre: Session is not generating or has streaming message                     │
+│ Post: Message created or updated with new chunk                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[StreamAssistantMessage]
+  ΔChatStore
+  chunk: seq char
+  
+  -- Preconditions
+  let session = sessions[currentSessionIndex]
+  
+  -- Operation (two cases)
+  
+  -- Case 1: Start new streaming message
+  (session.isGenerating = false ⟹
+    let message = ChatMessage where
+      message.id = fresh_id()
+      message.role = assistant
+      message.content = chunk
+      message.date = current_date_string()
+      message.streaming = true
+      message.isError = false
+    
+    sessions'[currentSessionIndex].messages = session.messages ⌢ ⟨message⟩
+    sessions'[currentSessionIndex].isGenerating = true)
+  
+  -- Case 2: Update existing streaming message
+  ∨
+  (session.isGenerating = true ⟹
+    let lastMsg = last(session.messages)
+    lastMsg.streaming = true
+    
+    sessions'[currentSessionIndex].messages = 
+      init(session.messages) ⌢ ⟨lastMsg with content := lastMsg.content ⌢ chunk⟩)
+  
+  -- Postconditions
+  sessions'[currentSessionIndex].lastUpdate = current_time()
+
+┌─ CompleteAssistantMessage ─────────────────────────────────────────────────┐
+│ Finalizes streaming assistant message                                       │
+│ Pre: Session is generating                                                  │
+│ Post: Message marked complete, generation stopped                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CompleteAssistantMessage]
+  ΔChatStore
+  stopReason: ChatCompletionFinishReason
+  usage?: CompletionUsage
+  model: Model
+  
+  -- Preconditions
+  sessions[currentSessionIndex].isGenerating = true
+  
+  -- Operation
+  let session = sessions[currentSessionIndex]
+  let lastMsg = last(session.messages)
+  
+  let completedMsg = lastMsg where
+    streaming = false
+    stopReason = stopReason
+    usage = usage
+    model = model
+  
+  -- Postconditions
+  sessions'[currentSessionIndex].messages = 
+    init(session.messages) ⌢ ⟨completedMsg⟩
+  sessions'[currentSessionIndex].isGenerating = false
+  sessions'[currentSessionIndex].lastUpdate = current_time()
+  sessions'[currentSessionIndex].stat = update_stats(session.stat, completedMsg)
+
+┌─ UpdateSessionTopic ───────────────────────────────────────────────────────┐
+│ Updates the topic/title of a session                                        │
+│ Pre: Session exists                                                         │
+│ Post: Session topic updated                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[UpdateSessionTopic]
+  ΔChatStore
+  sessionId: seq char
+  newTopic: seq char
+  
+  -- Preconditions
+  ∃ i: ℕ • i < length(sessions) ∧ sessions[i].id = sessionId
+  length(newTopic) > 0
+  
+  -- Operation
+  let index = find_session_index(sessionId)
+  
+  -- Postconditions
+  sessions'[index].topic = newTopic
+  sessions'[index].lastUpdate = current_time()
+  
+  ∀ i: ℕ • i ≠ index ⟹ sessions'[i] = sessions[i]
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 2: CONFIGURATION OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ UpdateModelConfig ────────────────────────────────────────────────────────┐
+│ Updates model configuration parameters                                      │
+│ Pre: New config is valid                                                    │
+│ Post: Config updated with new values                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[UpdateModelConfig]
+  ΔConfigStore
+  newConfig: ModelConfig
+  
+  -- Preconditions
+  valid_model(newConfig.model)
+  0.0 ≤ newConfig.temperature ≤ 2.0
+  0.0 ≤ newConfig.top_p ≤ 1.0
+  0 < newConfig.max_tokens ≤ newConfig.context_window_size
+  
+  -- Operation & Postconditions
+  config'.modelConfig = newConfig
+  config'.lastUpdate = current_time()
+  
+  -- Preserve other config fields
+  config'.submitKey = config.submitKey
+  config'.theme = config.theme
+  -- ... (other fields unchanged)
+
+┌─ SwitchModelClient ────────────────────────────────────────────────────────┐
+│ Switches between WebLLM and MLC-LLM API clients                             │
+│ Pre: Client type is valid, required config exists                           │
+│ Post: Client type changed, related config validated                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[SwitchModelClient]
+  ΔConfigStore
+  ΔWebLLMState
+  ΔMLCLLMState
+  newClientType: ModelClient
+  
+  -- Preconditions
+  newClientType ∈ {WEBLLM, MLCLLM_API}
+  
+  newClientType = MLCLLM_API ⟹ 
+    length(config.modelConfig.mlc_endpoint) > 0 ∧
+    is_valid_url(config.modelConfig.mlc_endpoint)
+  
+  -- Operation
+  config'.modelClientType = newClientType
+  config'.lastUpdate = current_time()
+  
+  -- Side effects on client states
+  (newClientType = WEBLLM ⟹
+    webllmState'.initialized = false ∧
+    mlcllmState'.connected = false)
+  
+  ∨
+  (newClientType = MLCLLM_API ⟹
+    webllmState'.isGenerating = false ∧
+    mlcllmState'.endpoint = config.modelConfig.mlc_endpoint)
+
+┌─ UpdateTheme ──────────────────────────────────────────────────────────────┐
+│ Changes the UI theme                                                        │
+│ Pre: Theme is valid                                                         │
+│ Post: Theme updated                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[UpdateTheme]
+  ΔConfigStore
+  newTheme: Theme
+  
+  -- Preconditions
+  newTheme ∈ {Auto, Dark, Light}
+  
+  -- Postconditions
+  config'.theme = newTheme
+  config'.lastUpdate = current_time()
+  
+  -- All other fields unchanged
+  config'.modelConfig = config.modelConfig
+  config'.submitKey = config.submitKey
+  -- ...
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 3: MULTI-AGENT OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ RegisterAgent ────────────────────────────────────────────────────────────┐
+│ Registers a new agent in the orchestration system                           │
+│ Pre: Agent ID is unique                                                     │
+│ Post: Agent added to registry                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[RegisterAgent]
+  ΔOrchestrationState
+  agent: Agent
+  
+  -- Preconditions
+  agent.id ∉ dom agents
+  length(agent.name) > 0
+  length(agent.capabilities) > 0
+  
+  -- Postconditions
+  agents' = agents ∪ {agent.id ↦ agent}
+  
+  -- Message queue and tasks unchanged
+  messageQueue' = messageQueue
+  tasks' = tasks
+  activeSession' = activeSession
+
+┌─ UnregisterAgent ──────────────────────────────────────────────────────────┐
+│ Removes an agent from the system                                            │
+│ Pre: Agent exists and has no assigned tasks                                 │
+│ Post: Agent removed, status set to offline                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[UnregisterAgent]
+  ΔOrchestrationState
+  agentId: seq char
+  
+  -- Preconditions
+  agentId ∈ dom agents
+  ∀ t: Task • t ∈ ran tasks ⟹ 
+    t.assignedTo ≠ agentId ∨ t.status ∈ {COMPLETED, FAILED, CANCELLED}
+  
+  -- Operation
+  let agent = agents(agentId) with status := OFFLINE
+  
+  -- Postconditions
+  agents' = {id ↦ a | id ↦ a ∈ agents ∧ id ≠ agentId}
+  
+  -- Remove messages involving this agent
+  messageQueue' = {m | m ∈ messageQueue ∧ 
+    m.senderId ≠ agentId ∧ m.receiverId ≠ agentId}
+
+┌─ CreateTask ───────────────────────────────────────────────────────────────┐
+│ Creates a new task for agent execution                                      │
+│ Pre: Description is non-empty                                               │
+│ Post: Task added to task registry                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CreateTask]
+  ΔOrchestrationState
+  description: seq char
+  priority: ℕ
+  dependencies?: seq (seq char)
+  
+  -- Preconditions
+  length(description) > 0
+  1 ≤ priority ≤ 10
+  
+  dependencies ≠ null ⟹ 
+    ∀ dep: seq char • dep ∈ dependencies ⟹ dep ∈ dom tasks
+  
+  -- Operation
+  let task = Task where
+    task.id = fresh_id()
+    task.description = description
+    task.status = PENDING
+    task.priority = priority
+    task.dependencies = dependencies ∨ ⟨⟩
+    task.createdAt = current_time()
+    task.updatedAt = current_time()
+  
+  -- Postconditions
+  tasks' = tasks ∪ {task.id ↦ task}
+  
+  -- Check for dependency cycles
+  task.id ∉ transitive_task_dependencies(task.id)
+
+┌─ AssignTask ───────────────────────────────────────────────────────────────┐
+│ Assigns a task to a specific agent                                          │
+│ Pre: Task exists, agent exists and has capability, dependencies met         │
+│ Post: Task assigned, agent status updated, message sent                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[AssignTask]
+  ΔOrchestrationState
+  taskId: seq char
+  agentId: seq char
+  
+  -- Preconditions
+  taskId ∈ dom tasks
+  agentId ∈ dom agents
+  
+  let task = tasks(taskId)
+  let agent = agents(agentId)
+  
+  task.status = PENDING
+  agent.status ∈ {IDLE, BUSY}
+  
+  -- Agent has required capability
+  ∃ cap: seq char • cap ∈ agent.capabilities ∧ 
+    requires_capability(task.description, cap)
+  
+  -- Dependencies are completed
+  ∀ dep: seq char • dep ∈ task.dependencies ⟹ 
+    tasks(dep).status = COMPLETED
+  
+  -- Operation
+  let updatedTask = task where
+    assignedTo = agentId
+    status = ASSIGNED
+    updatedAt = current_time()
+  
+  let updatedAgent = agent where
+    status = BUSY
+  
+  let taskMessage = AgentMessage where
+    id = fresh_id()
+    senderId = "orchestrator"
+    receiverId = agentId
+    content = task.description
+    timestamp = current_time()
+    type = TASK
+    metadata = {taskId ↦ taskId}
+  
+  -- Postconditions
+  tasks' = tasks ⊕ {taskId ↦ updatedTask}
+  agents' = agents ⊕ {agentId ↦ updatedAgent}
+  messageQueue' = messageQueue ⌢ ⟨taskMessage⟩
+
+┌─ CompleteTask ─────────────────────────────────────────────────────────────┐
+│ Marks a task as completed with result                                       │
+│ Pre: Task is in progress                                                    │
+│ Post: Task completed, agent status updated                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CompleteTask]
+  ΔOrchestrationState
+  taskId: seq char
+  result: any
+  
+  -- Preconditions
+  taskId ∈ dom tasks
+  
+  let task = tasks(taskId)
+  task.status = IN_PROGRESS
+  task.assignedTo ≠ ""
+  
+  -- Operation
+  let updatedTask = task where
+    status = COMPLETED
+    result = result
+    updatedAt = current_time()
+  
+  let agentId = task.assignedTo
+  let updatedAgent = agents(agentId) where
+    status = IDLE
+  
+  -- Postconditions
+  tasks' = tasks ⊕ {taskId ↦ updatedTask}
+  agents' = agents ⊕ {agentId ↦ updatedAgent}
+
+┌─ SendAgentMessage ─────────────────────────────────────────────────────────┐
+│ Sends a message from one agent to another (or broadcast)                    │
+│ Pre: Sender exists, receiver exists (unless broadcast)                      │
+│ Post: Message added to queue                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[SendAgentMessage]
+  ΔOrchestrationState
+  senderId: seq char
+  receiverId?: seq char
+  content: seq char
+  msgType: MessageType
+  
+  -- Preconditions
+  senderId ∈ dom agents
+  length(content) > 0
+  
+  msgType ≠ BROADCAST ⟹ 
+    receiverId ≠ null ∧ receiverId ∈ dom agents
+  
+  -- Operation
+  let message = AgentMessage where
+    id = fresh_id()
+    senderId = senderId
+    receiverId = receiverId ∨ ""
+    content = content
+    timestamp = current_time()
+    type = msgType
+  
+  -- Postconditions
+  messageQueue' = messageQueue ⌢ ⟨message⟩
+  
+  -- Agents and tasks unchanged
+  agents' = agents
+  tasks' = tasks
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 4: KNOWLEDGE REPRESENTATION OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ AddAtom ──────────────────────────────────────────────────────────────────┐
+│ Adds an atom to the AtomSpace                                               │
+│ Pre: Atom is well-formed                                                    │
+│ Post: Atom added, index updated                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[AddAtom]
+  ΔAtomSpace
+  atom: AtomNode
+  
+  -- Preconditions
+  is_well_formed_atom(atom)
+  
+  -- No cyclic references in children
+  ∀ c: AtomNode • c ∈ atom.children ⟹ 
+    atom ∉ transitive_children(c)
+  
+  -- Operation & Postconditions
+  atoms' = atoms ⌢ ⟨atom⟩
+  
+  -- Update index if atom has a name
+  atom.name ≠ "" ⟹ 
+    atomIndex' = atomIndex ∪ {atom.name ↦ length(atoms)}
+  
+  atom.name = "" ⟹ 
+    atomIndex' = atomIndex
+
+┌─ QueryAtomSpace ───────────────────────────────────────────────────────────┐
+│ Queries the AtomSpace for matching atoms                                    │
+│ Pre: Query pattern is valid                                                 │
+│ Post: Returns matching atoms (read-only operation)                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[QueryAtomSpace]
+  ΞAtomSpace
+  pattern: AtomNode
+  result!: seq AtomNode
+  
+  -- Preconditions
+  is_well_formed_atom(pattern)
+  
+  -- Operation
+  result! = {a | a ∈ atoms ∧ matches_pattern(a, pattern)}
+  
+  -- State unchanged (read-only)
+
+┌─ UpdateTruthValue ─────────────────────────────────────────────────────────┐
+│ Updates the truth value of an atom                                          │
+│ Pre: Atom exists, truth value is valid                                      │
+│ Post: Atom truth value updated                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[UpdateTruthValue]
+  ΔAtomSpace
+  atomName: seq char
+  newTruthValue: TruthValue
+  
+  -- Preconditions
+  atomName ∈ dom atomIndex
+  0.0 ≤ newTruthValue.strength ≤ 1.0
+  0.0 ≤ newTruthValue.confidence ≤ 1.0
+  
+  -- Operation
+  let index = atomIndex(atomName)
+  let atom = atoms[index]
+  
+  -- Postconditions
+  atoms'[index] = atom with truthValue := newTruthValue
+  
+  ∀ i: ℕ • i ≠ index ⟹ atoms'[i] = atoms[i]
+  atomIndex' = atomIndex
+
+┌─ TranslateToAtomese ───────────────────────────────────────────────────────┐
+│ Translates natural language or MeTTa to Atomese                             │
+│ Pre: Input is non-empty, source format is valid                             │
+│ Post: Returns Atomese representation                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[TranslateToAtomese]
+  request: TranslationRequest
+  response!: TranslationResponse
+  
+  -- Preconditions
+  length(request.input) > 0
+  request.sourceFormat ∈ {NATURAL_LANGUAGE, METTA}
+  request.targetFormat = ATOMESE
+  
+  -- Operation (abstract - implementation uses LLM or rule-based translation)
+  let atomese_output = translate(request.input, request.sourceFormat, ATOMESE)
+  
+  -- Postconditions
+  response!.output = atomese_output
+  response!.sourceFormat = request.sourceFormat
+  response!.targetFormat = ATOMESE
+  0.0 ≤ response!.confidence ≤ 1.0
+
+┌─ TranslateToMeTTa ─────────────────────────────────────────────────────────┐
+│ Translates natural language or Atomese to MeTTa                             │
+│ Pre: Input is non-empty, source format is valid                             │
+│ Post: Returns MeTTa representation                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[TranslateToMeTTa]
+  request: TranslationRequest
+  response!: TranslationResponse
+  
+  -- Preconditions
+  length(request.input) > 0
+  request.sourceFormat ∈ {NATURAL_LANGUAGE, ATOMESE}
+  request.targetFormat = METTA
+  
+  -- Operation
+  let metta_output = translate(request.input, request.sourceFormat, METTA)
+  
+  -- Postconditions
+  response!.output = metta_output
+  response!.sourceFormat = request.sourceFormat
+  response!.targetFormat = METTA
+  0.0 ≤ response!.confidence ≤ 1.0
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 5: REASONING OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ ApplyPLNRule ─────────────────────────────────────────────────────────────┐
+│ Applies a PLN inference rule (deduction, induction, abduction)              │
+│ Pre: Premises exist in AtomSpace, rule is applicable                        │
+│ Post: Conclusion added to AtomSpace with computed truth value               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ApplyPLNRule]
+  ΔAtomSpace
+  ΔPLNState
+  ruleName: {deduction, induction, abduction, bayes}
+  premise1: AtomNode
+  premise2: AtomNode
+  
+  -- Preconditions
+  premise1 ∈ atoms
+  premise2 ∈ atoms
+  is_applicable(ruleName, premise1, premise2)
+  
+  -- Operation
+  let conclusion = apply_rule(ruleName, premise1, premise2)
+  let conclusionTV = compute_truth_value(ruleName, premise1.truthValue, premise2.truthValue)
+  
+  conclusion.truthValue = conclusionTV
+  
+  -- Postconditions
+  atoms' = atoms ⌢ ⟨conclusion⟩
+  inferenceHistory' = inferenceHistory ⌢ ⟨(premise1, premise2, conclusion)⟩
+  ruleApplications' = ruleApplications + 1
+  averageConfidence' = 
+    (averageConfidence × ruleApplications + conclusionTV.confidence) / ruleApplications'
+
+┌─ UpdateSTI ────────────────────────────────────────────────────────────────┐
+│ Updates short-term importance (attention) for an atom                       │
+│ Pre: Atom exists, STI delta preserves conservation                          │
+│ Post: STI updated, conservation maintained                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[UpdateSTI]
+  ΔECANState
+  atomName: seq char
+  stiDelta: ℤ
+  
+  -- Preconditions
+  atomName ∈ dom atomSTI
+  
+  let newSTI = atomSTI(atomName) + stiDelta
+  MIN_STI ≤ newSTI ≤ MAX_STI
+  
+  -- Conservation: total STI remains constant (other atoms adjusted)
+  
+  -- Postconditions
+  atomSTI' = atomSTI ⊕ {atomName ↦ newSTI}
+  totalSTI' = totalSTI  -- Conservation law
+  
+  -- Update attentional focus
+  newSTI > ATTENTION_THRESHOLD ⟹ 
+    attentionalFocus' = attentionalFocus ∪ {atomName}
+  
+  newSTI ≤ ATTENTION_THRESHOLD ⟹ 
+    attentionalFocus' = attentionalFocus \ {atomName}
+
+┌─ ForgettingProcess ────────────────────────────────────────────────────────┐
+│ Implements forgetting: low-STI atoms lose importance over time              │
+│ Pre: ECAN state exists                                                      │
+│ Post: STI values decayed, some atoms may be removed                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ForgettingProcess]
+  ΔECANState
+  ΔAtomSpace
+  decayFactor: ℝ
+  
+  -- Preconditions
+  0.0 < decayFactor < 1.0
+  
+  -- Operation: decay STI for atoms below threshold
+  ∀ name: seq char • name ∈ dom atomSTI ∧ atomSTI(name) < ATTENTION_THRESHOLD ⟹
+    atomSTI'(name) = ⌊atomSTI(name) × decayFactor⌋
+  
+  -- Remove atoms with STI below minimum
+  let forgotten = {name | name ∈ dom atomSTI ∧ atomSTI'(name) < MIN_STI}
+  
+  -- Postconditions
+  atomSTI' = {name ↦ sti | name ↦ sti ∈ atomSTI ∧ name ∉ forgotten}
+  atoms' = {a | a ∈ atoms ∧ a.name ∉ forgotten}
+  
+  totalSTI' = totalSTI  -- Conservation maintained
+
+┌─ MOSESGenerate ────────────────────────────────────────────────────────────┐
+│ Generates new candidate programs through crossover and mutation             │
+│ Pre: Population exists                                                      │
+│ Post: New generation created, best fitness tracked                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MOSESGenerate]
+  ΔMOSESState
+  crossoverRate: ℝ
+  mutationRate: ℝ
+  
+  -- Preconditions
+  length(population) > 0
+  0.0 ≤ crossoverRate ≤ 1.0
+  0.0 ≤ mutationRate ≤ 1.0
+  
+  -- Operation
+  let parents = select_parents(population)  -- Based on fitness
+  let offspring = crossover(parents, crossoverRate)
+  let mutated = mutate(offspring, mutationRate)
+  let evaluated = evaluate_fitness(mutated)
+  
+  -- Postconditions
+  population' = select_survivors(population ∪ evaluated)
+  generation' = generation + 1
+  bestFitness' = max{f | (_, f) ∈ population'}
+  averageFitness' = (Σ{f | (_, f) ∈ population'}) / length(population')
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 6: MEMORY OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ StoreMemory ──────────────────────────────────────────────────────────────┐
+│ Stores a new memory in short-term memory                                    │
+│ Pre: Content is non-empty                                                   │
+│ Post: Memory added to STM, capacity maintained                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[StoreMemory]
+  ΔPersistentMemoryState
+  content: seq char
+  importance: ℝ
+  
+  -- Preconditions
+  length(content) > 0
+  0.0 ≤ importance ≤ 1.0
+  
+  -- Operation
+  let memory = MemoryEntry where
+    id = fresh_id()
+    content = content
+    importance = importance
+    timestamp = current_time()
+    accessCount = 0
+    lastAccessed = current_time()
+  
+  -- Postconditions
+  -- If STM at capacity, remove oldest low-importance memory
+  length(shortTermMemory) = STM_CAPACITY ⟹
+    let oldest = find_oldest_low_importance(shortTermMemory)
+    shortTermMemory' = remove(shortTermMemory, oldest) ⌢ ⟨memory⟩
+  
+  length(shortTermMemory) < STM_CAPACITY ⟹
+    shortTermMemory' = shortTermMemory ⌢ ⟨memory⟩
+  
+  memoryIndex' = memoryIndex ∪ {memory.id ↦ position(memory, shortTermMemory')}
+
+┌─ ConsolidateMemory ────────────────────────────────────────────────────────┐
+│ Moves important memories from STM to LTM                                    │
+│ Pre: STM has memories above importance threshold                            │
+│ Post: Important memories moved to LTM                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ConsolidateMemory]
+  ΔPersistentMemoryState
+  
+  -- Operation
+  let toConsolidate = {m | m ∈ shortTermMemory ∧ 
+    (m.importance ≥ LTM_IMPORTANCE_THRESHOLD ∨ 
+     m.accessCount ≥ LTM_ACCESS_THRESHOLD)}
+  
+  -- Postconditions
+  longTermMemory' = longTermMemory ∪ toConsolidate
+  shortTermMemory' = shortTermMemory \ toConsolidate
+  
+  -- Update indices
+  ∀ m: MemoryEntry • m ∈ toConsolidate ⟹
+    memoryIndex'(m.id) = position(m, longTermMemory')
+
+┌─ RecallMemory ─────────────────────────────────────────────────────────────┐
+│ Retrieves memories matching a query (read-only)                             │
+│ Pre: Query is non-empty                                                     │
+│ Post: Returns matching memories, updates access counts                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[RecallMemory]
+  ΔPersistentMemoryState
+  query: seq char
+  result!: seq MemoryEntry
+  
+  -- Preconditions
+  length(query) > 0
+  
+  -- Operation
+  let allMemories = shortTermMemory ∪ longTermMemory
+  result! = {m | m ∈ allMemories ∧ matches_query(m.content, query)}
+  
+  -- Postconditions: Update access counts and timestamps
+  ∀ m: MemoryEntry • m ∈ result! ⟹
+    m'.accessCount = m.accessCount + 1 ∧
+    m'.lastAccessed = current_time()
+
+┌─ RecordExperience ─────────────────────────────────────────────────────────┐
+│ Records an experience for agent learning                                    │
+│ Pre: Agent exists, description is non-empty                                 │
+│ Post: Experience added to agent's learning state                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[RecordExperience]
+  ΔAgentLearningState
+  description: seq char
+  reward: ℝ
+  
+  -- Preconditions
+  length(description) > 0
+  -1.0 ≤ reward ≤ 1.0
+  
+  -- Postconditions
+  experiences' = experiences ⌢ ⟨(description, reward)⟩
+  
+  -- Extract patterns if enough experiences
+  length(experiences') ≥ PATTERN_EXTRACTION_THRESHOLD ⟹
+    learnedPatterns' = learnedPatterns ∪ extract_patterns(experiences')
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 7: LLM CLIENT OPERATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ InitializeWebLLM ─────────────────────────────────────────────────────────┐
+│ Initializes WebLLM engine and loads model                                   │
+│ Pre: Model is valid, not already initialized                                │
+│ Post: Model loaded into WebGPU, ready for inference                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[InitializeWebLLM]
+  ΔWebLLMState
+  ΔConfigStore
+  
+  -- Preconditions
+  webllmState.initialized = false
+  valid_model(configStore.config.modelConfig.model)
+  
+  -- Operation (side effects: downloads model, initializes WebGPU)
+  let model = configStore.config.modelConfig.model
+  load_model_to_webgpu(model, configStore.config.cacheType)
+  
+  -- Postconditions
+  webllmState'.initialized = true
+  webllmState'.currentModel = model
+  webllmState'.modelCache = webllmState.modelCache ∪ {model}
+  webllmState'.isGenerating = false
+
+┌─ GenerateCompletion ───────────────────────────────────────────────────────┐
+│ Generates LLM completion (streaming or non-streaming)                       │
+│ Pre: Client initialized, not currently generating                           │
+│ Post: Response streamed to chat session                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[GenerateCompletion]
+  ΔSystemState
+  messages: seq RequestMessage
+  stream: 𝔹
+  
+  -- Preconditions
+  (configStore.config.modelClientType = WEBLLM ⟹ webllmState.initialized = true) ∧
+  (configStore.config.modelClientType = MLCLLM_API ⟹ mlcllmState.connected = true)
+  
+  chatStore.sessions[chatStore.currentSessionIndex].isGenerating = false
+  length(messages) > 0
+  
+  -- Operation (complex - involves streaming callbacks)
+  let config = configStore.config.modelConfig
+  
+  stream = true ⟹
+    -- Streaming: multiple calls to StreamAssistantMessage
+    for chunk in generate_stream(messages, config) do
+      StreamAssistantMessage(chunk)
+  
+  stream = false ⟹
+    -- Non-streaming: single call
+    let response = generate_complete(messages, config)
+    StreamAssistantMessage(response)
+  
+  -- Postconditions
+  (configStore.config.modelClientType = WEBLLM ⟹ webllmState'.isGenerating = false) ∧
+  (configStore.config.modelClientType = MLCLLM_API ⟹ mlcllmState'.isGenerating = false)
+  
+  chatStore'.sessions[chatStore.currentSessionIndex].isGenerating = false
+
+┌─ AbortGeneration ──────────────────────────────────────────────────────────┐
+│ Aborts an ongoing LLM generation                                            │
+│ Pre: Generation is in progress                                              │
+│ Post: Generation stopped, message finalized                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[AbortGeneration]
+  ΔSystemState
+  
+  -- Preconditions
+  chatStore.sessions[chatStore.currentSessionIndex].isGenerating = true
+  
+  -- Operation
+  abort_llm_generation()
+  
+  -- Postconditions
+  webllmState'.isGenerating = false
+  mlcllmState'.isGenerating = false
+  
+  CompleteAssistantMessage(
+    stopReason := error,
+    usage := null,
+    model := configStore.config.modelConfig.model)
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 8: HELPER FUNCTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+[Helper Functions]
+  fresh_id: → seq char
+  current_time: → ℕ
+  current_date_string: → seq char
+  find_session_index: seq char → ℕ
+  remove_at: seq α × ℕ → seq α
+  update_stats: ChatStat × ChatMessage → ChatStat
+  find_oldest_low_importance: seq MemoryEntry → MemoryEntry
+  position: MemoryEntry × seq MemoryEntry → ℕ
+  matches_pattern: AtomNode × AtomNode → 𝔹
+  matches_query: seq char × seq char → 𝔹
+  translate: seq char × Format × Format → seq char
+  is_applicable: seq char × AtomNode × AtomNode → 𝔹
+  apply_rule: seq char × AtomNode × AtomNode → AtomNode
+  compute_truth_value: seq char × TruthValue × TruthValue → TruthValue
+  select_parents: seq (seq char × ℝ) → seq (seq char × ℝ)
+  crossover: seq (seq char × ℝ) × ℝ → seq (seq char × ℝ)
+  mutate: seq (seq char × ℝ) × ℝ → seq (seq char × ℝ)
+  evaluate_fitness: seq (seq char × ℝ) → seq (seq char × ℝ)
+  select_survivors: seq (seq char × ℝ) → seq (seq char × ℝ)
+  extract_patterns: seq (seq char × ℝ) → seq (seq char)
+  load_model_to_webgpu: Model × CacheType → ()
+  generate_stream: seq RequestMessage × ModelConfig → Stream(seq char)
+  generate_complete: seq RequestMessage × ModelConfig → seq char
+  abort_llm_generation: → ()
+
+[Constants]
+  MAX_SESSIONS: ℕ
+  DEFAULT_TOPIC: seq char
+  PATTERN_EXTRACTION_THRESHOLD: ℕ
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF OPERATIONS SPECIFICATION
+═══════════════════════════════════════════════════════════════════════════════
