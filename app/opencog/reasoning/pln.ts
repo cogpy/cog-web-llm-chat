@@ -3,7 +3,7 @@
  * Provides probabilistic reasoning capabilities for OpenCog
  */
 
-import { AtomNode, TruthValue } from "../types";
+import { AtomNode, TruthValue, AtomType } from "../types";
 import log from "loglevel";
 
 /**
@@ -155,7 +155,9 @@ export class PLNForwardChainer {
    * Check if atom is an implication link
    */
   private isImplication(atom: AtomNode): boolean {
-    return atom.type === "ImplicationLink" && atom.children?.length === 2;
+    return (
+      atom.type === AtomType.IMPLICATION_LINK && atom.children?.length === 2
+    );
   }
 
   /**

@@ -67,7 +67,12 @@ export function exportKnowledgeBaseMetta(atoms: AtomNode[]): string {
     try {
       // Simple conversion - create type declarations and facts
       if (atom.name) {
-        if (atom.type.includes("Node")) {
+        // Check if it's a Node type using enum
+        if (
+          atom.type === AtomType.CONCEPT_NODE ||
+          atom.type === AtomType.PREDICATE_NODE ||
+          atom.type === AtomType.VARIABLE_NODE
+        ) {
           mettaExpressions.push(`(: ${atom.name} Type)`);
         }
 

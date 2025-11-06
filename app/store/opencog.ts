@@ -510,9 +510,18 @@ export const useOpenCogStore = create<OpenCogState>()(
           throw new Error("Memory system not initialized");
         }
 
+        // Validate type
+        const validTypes: Array<
+          "experience" | "knowledge" | "skill" | "context"
+        > = ["experience", "knowledge", "skill", "context"];
+
+        if (!validTypes.includes(type as any)) {
+          throw new Error(`Invalid memory type: ${type}`);
+        }
+
         await memory.store({
           agentId,
-          type: type as any,
+          type: type as "experience" | "knowledge" | "skill" | "context",
           content,
           importance,
           timestamp: Date.now(),
@@ -531,7 +540,12 @@ export const useOpenCogStore = create<OpenCogState>()(
 
         const results = await memory.query({
           agentId,
-          type: type as any,
+          type: type as
+            | "experience"
+            | "knowledge"
+            | "skill"
+            | "context"
+            | undefined,
         });
 
         return results;
