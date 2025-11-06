@@ -341,13 +341,70 @@ To add support for additional formats:
 
 ## Future Enhancements
 
-- [ ] Integration with actual OpenCog Hyperon
-- [ ] Real-time AtomSpace visualization
-- [ ] Advanced reasoning algorithms
-- [ ] Agent learning and adaptation
-- [ ] Persistent agent memory
-- [ ] Multi-user collaboration
-- [ ] Agent marketplace/plugins
+### Recently Implemented ✅
+
+- [x] **Advanced Reasoning Algorithms**
+  - PLN (Probabilistic Logic Networks) with deduction, induction, abduction
+  - ECAN (Economic Attention Allocation) with STI/LTI importance spreading
+  - MOSES (Meta-Optimizing Semantic Evolutionary Search) genetic programming
+  
+- [x] **Agent Learning and Adaptation**
+  - Experience-based learning with strategy formation
+  - Epsilon-greedy action selection
+  - Performance monitoring and adaptation
+  
+- [x] **Persistent Agent Memory**
+  - IndexedDB-based browser storage
+  - Memory types: experience, knowledge, skill, context
+  - Query system with filtering and consolidation
+  
+- [x] **Performance Monitoring Dashboard**
+  - Real-time metrics for PLN, ECAN, MOSES
+  - Agent status monitoring
+  - Memory statistics
+  - Historical trend visualization
+  
+- [x] **Real-time AtomSpace Visualization**
+  - Interactive graph visualization
+  - Force-directed layout
+  - Atom selection and details
+  
+- [x] **Advanced Query Builder**
+  - Visual query interface
+  - Multiple filter criteria (type, name, truth values)
+  - Pattern matching system
+  - AND/OR combination modes
+  
+- [x] **Knowledge Base Export/Import**
+  - Export to JSON, Atomese (.scm), MeTTa (.metta)
+  - Import with auto-format detection
+  - File upload/download
+  - KB merging with deduplication
+
+### Planned Future Enhancements
+
+- [ ] **Integration with actual OpenCog Hyperon**
+  - FFI bindings to Hyperon core
+  - Native MeTTa execution
+  - Hyperon AtomSpace synchronization
+  
+- [ ] **Visual Programming Interface**
+  - Drag-and-drop knowledge graph editor
+  - Interactive atom creation
+  - Visual link editing
+  - Constraint-based layout
+  
+- [ ] **Multi-user Collaboration**
+  - WebSocket-based real-time sync
+  - Conflict resolution strategies
+  - User presence indicators
+  - Collaborative editing
+  
+- [ ] **Agent Marketplace/Plugins**
+  - Plugin system architecture
+  - Agent discovery and installation
+  - Sandboxed execution environment
+  - Capability-based security
 
 ## Contributing
 
