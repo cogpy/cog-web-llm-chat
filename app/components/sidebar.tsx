@@ -18,6 +18,7 @@ import AutoIcon from "../icons/auto.svg";
 import Locale from "../locales";
 
 import { Theme, useAppConfig, useChatStore } from "../store";
+import { useOpenCogStore } from "../store/opencog";
 
 import {
   DEFAULT_SIDEBAR_WIDTH,
@@ -133,6 +134,7 @@ function useDragSideBar() {
 
 export function SideBar(props: { className?: string }) {
   const chatStore = useChatStore();
+  const openCogStore = useOpenCogStore();
 
   // drag side bar
   const { onDragStart, shouldNarrow } = useDragSideBar();
@@ -190,6 +192,29 @@ export function SideBar(props: { className?: string }) {
           className={styles["sidebar-bar-button"]}
           onClick={() => {
             navigate(Path.Settings);
+          }}
+          shadow
+        />
+      </div>
+
+      <div className={styles["sidebar-header-bar"]}>
+        <IconButton
+          icon={<AddIcon />}
+          text={shouldNarrow ? undefined : "Agents"}
+          className={styles["sidebar-bar-button"]}
+          onClick={() => {
+            openCogStore.setShowAgentPanel(!openCogStore.showAgentPanel);
+          }}
+          shadow
+        />
+        <IconButton
+          icon={<InternetIcon />}
+          text={shouldNarrow ? undefined : "Translator"}
+          className={styles["sidebar-bar-button"]}
+          onClick={() => {
+            openCogStore.setShowTranslationPanel(
+              !openCogStore.showTranslationPanel,
+            );
           }}
           shadow
         />

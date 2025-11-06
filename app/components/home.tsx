@@ -29,6 +29,7 @@ import { WebLLMApi } from "../client/webllm";
 import { ModelClient, useChatStore } from "../store";
 import { MLCLLMContext, WebLLMContext } from "../context";
 import { MlcLLMApi } from "../client/mlcllm";
+import { AgentPanel, TranslationPanel } from "./opencog";
 
 export function Loading(props: { noLogo?: boolean }) {
   return (
@@ -156,6 +157,10 @@ function Screen() {
             <Route path={Path.Settings} element={<Settings />} />
           </Routes>
         </div>
+
+        {/* OpenCog Multi-Agent System Panels */}
+        <AgentPanel />
+        <TranslationPanel />
       </>
     </div>
   );
