@@ -1,0 +1,695 @@
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ WebLLM Chat - Integration Contracts Specification (Z++)                     │
+│ Formal specification of external service integrations and contracts         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 1: WEBLLM API INTEGRATION
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ WebLLMEngineConfig ───────────────────────────────────────────────────────┐
+│ Configuration for WebLLM engine initialization                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[WebLLMEngineConfig]
+  model: Model
+  cacheType: CacheType
+  logLevel: {ERROR, WARN, INFO, DEBUG, SILENT}
+  temperature: ℝ
+  top_p: ℝ
+  max_tokens: ℕ
+  
+  -- Invariants
+  valid_model(model)
+  0.0 ≤ temperature ≤ 2.0
+  0.0 ≤ top_p ≤ 1.0
+  0 < max_tokens
+
+┌─ InitProgressReport ───────────────────────────────────────────────────────┐
+│ Progress report during model initialization                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[InitProgressReport]
+  progress: ℝ
+  text: seq char
+  timeElapsed: ℕ
+  
+  -- Invariants
+  0.0 ≤ progress ≤ 1.0
+  length(text) > 0
+  timeElapsed ≥ 0
+
+┌─ WebLLM_Initialize ────────────────────────────────────────────────────────┐
+│ Contract: Initialize WebLLM engine with model                               │
+│ External API: ServiceWorkerMLCEngine.reload() or WebWorkerMLCEngine.reload()│
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[WebLLM_Initialize]
+  config: WebLLMEngineConfig
+  onProgress?: InitProgressReport → ()
+  
+  -- Preconditions
+  -- Browser must support WebGPU
+  browser_supports_webgpu()
+  
+  -- Model must be available in prebuilt config or custom
+  config.model ∈ PREBUILT_MODELS ∨ is_custom_model(config.model)
+  
+  -- Sufficient storage available
+  available_storage() ≥ estimated_model_size(config.model)
+  
+  -- Postconditions (on success)
+  model_loaded_in_webgpu(config.model)
+  
+  -- Callback contract
+  onProgress ≠ null ⟹
+    ∀ report: InitProgressReport • 
+      0.0 ≤ report.progress ≤ 1.0 ∧
+      final_report.progress = 1.0
+  
+  -- Error conditions
+  ¬browser_supports_webgpu() ⟹ throws(WebGPUNotSupportedError)
+  available_storage() < estimated_model_size(config.model) ⟹ 
+    throws(InsufficientStorageError)
+  network_error_during_download() ⟹ throws(NetworkError)
+
+┌─ WebLLM_Chat ──────────────────────────────────────────────────────────────┐
+│ Contract: Generate chat completion                                          │
+│ External API: MLCEngine.chat.completions.create()                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[WebLLM_Chat]
+  messages: seq ChatCompletionMessageParam
+  stream: 𝔹
+  temperature?: ℝ
+  max_tokens?: ℕ
+  stop?: seq (seq char)
+  onUpdate?: (seq char → ())
+  result!: ChatCompletion ∪ Stream(ChatCompletionChunk)
+  
+  -- Preconditions
+  length(messages) > 0
+  
+  -- All messages have valid roles
+  ∀ m: ChatCompletionMessageParam • m ∈ messages ⟹ 
+    m.role ∈ {system, user, assistant}
+  
+  -- Content is non-empty
+  ∀ m: ChatCompletionMessageParam • m ∈ messages ⟹ 
+    length(m.content) > 0
+  
+  -- Model is initialized
+  model_loaded_in_webgpu()
+  
+  -- Streaming requires callback
+  stream = true ⟹ onUpdate ≠ null
+  
+  -- Parameter ranges
+  temperature ≠ null ⟹ 0.0 ≤ temperature ≤ 2.0
+  max_tokens ≠ null ⟹ 0 < max_tokens
+  
+  -- Postconditions (non-streaming)
+  stream = false ⟹
+    result! ∈ ChatCompletion ∧
+    result!.choices[0].message.role = assistant ∧
+    length(result!.choices[0].message.content) > 0 ∧
+    result!.usage.total_tokens = 
+      result!.usage.prompt_tokens + result!.usage.completion_tokens
+  
+  -- Postconditions (streaming)
+  stream = true ⟹
+    result! ∈ Stream(ChatCompletionChunk) ∧
+    ∀ chunk: ChatCompletionChunk • chunk ∈ result! ⟹
+      onUpdate(chunk.choices[0].delta.content) ∧
+      last_chunk.choices[0].finish_reason ∈ {stop, length, content_filter}
+  
+  -- Error conditions
+  ¬model_loaded_in_webgpu() ⟹ throws(ModelNotInitializedError)
+  context_length_exceeded(messages) ⟹ throws(ContextLengthExceededError)
+  gpu_out_of_memory() ⟹ throws(OutOfMemoryError)
+
+┌─ WebLLM_Abort ─────────────────────────────────────────────────────────────┐
+│ Contract: Abort ongoing generation                                          │
+│ External API: MLCEngine.interruptGenerate()                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[WebLLM_Abort]
+  -- Preconditions
+  generation_in_progress()
+  
+  -- Postconditions
+  ¬generation_in_progress()
+  
+  -- Streaming callbacks receive no more data
+  ∀ callback: (seq char → ()) • no_further_calls(callback)
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 2: MLC-LLM REST API INTEGRATION
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ MLCLLMEndpoint ───────────────────────────────────────────────────────────┐
+│ MLC-LLM REST API endpoint configuration                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MLCLLMEndpoint]
+  url: seq char
+  apiKey?: seq char
+  timeout: ℕ
+  
+  -- Invariants
+  is_valid_url(url)
+  url starts_with "http://" ∨ url starts_with "https://"
+  timeout > 0
+
+┌─ MLCLLM_ListModels ────────────────────────────────────────────────────────┐
+│ Contract: List available models from MLC-LLM server                         │
+│ External API: GET /v1/models                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MLCLLM_ListModels]
+  endpoint: MLCLLMEndpoint
+  result!: seq ModelRecord
+  
+  -- Preconditions
+  server_reachable(endpoint.url)
+  
+  -- HTTP Request
+  request_method = GET
+  request_url = endpoint.url ⌢ "/v1/models"
+  request_headers = {
+    "Content-Type" ↦ "application/json",
+    "Authorization" ↦ ("Bearer " ⌢ endpoint.apiKey) if endpoint.apiKey ≠ null
+  }
+  
+  -- Postconditions (on success)
+  http_status = 200
+  length(result!) > 0
+  
+  ∀ m: ModelRecord • m ∈ result! ⟹
+    length(m.name) > 0 ∧
+    length(m.display_name) > 0
+  
+  -- Error conditions
+  ¬server_reachable(endpoint.url) ⟹ throws(NetworkError)
+  http_status = 401 ⟹ throws(AuthenticationError)
+  http_status = 404 ⟹ throws(EndpointNotFoundError)
+  http_status ≥ 500 ⟹ throws(ServerError)
+
+┌─ MLCLLM_CreateCompletion ──────────────────────────────────────────────────┐
+│ Contract: Create chat completion via MLC-LLM REST API                       │
+│ External API: POST /v1/chat/completions                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[MLCLLM_CreateCompletion]
+  endpoint: MLCLLMEndpoint
+  request_body: ChatCompletionRequest
+  stream: 𝔹
+  result!: ChatCompletion ∪ Stream(ChatCompletionChunk)
+  
+  -- Request body schema
+  request_body.model: Model
+  request_body.messages: seq ChatCompletionMessageParam
+  request_body.temperature?: ℝ
+  request_body.top_p?: ℝ
+  request_body.max_tokens?: ℕ
+  request_body.stream: 𝔹
+  
+  -- Preconditions
+  server_reachable(endpoint.url)
+  length(request_body.messages) > 0
+  
+  request_body.temperature ≠ null ⟹ 0.0 ≤ request_body.temperature ≤ 2.0
+  request_body.top_p ≠ null ⟹ 0.0 ≤ request_body.top_p ≤ 1.0
+  request_body.max_tokens ≠ null ⟹ 0 < request_body.max_tokens
+  
+  -- HTTP Request
+  request_method = POST
+  request_url = endpoint.url ⌢ "/v1/chat/completions"
+  request_headers = {
+    "Content-Type" ↦ "application/json",
+    "Authorization" ↦ ("Bearer " ⌢ endpoint.apiKey) if endpoint.apiKey ≠ null
+  }
+  request_timeout = endpoint.timeout
+  
+  -- Postconditions (non-streaming)
+  stream = false ⟹
+    http_status = 200 ∧
+    result! ∈ ChatCompletion ∧
+    result!.model = request_body.model ∧
+    result!.choices[0].message.role = assistant ∧
+    length(result!.choices[0].message.content) > 0
+  
+  -- Postconditions (streaming)
+  stream = true ⟹
+    http_status = 200 ∧
+    result! ∈ Stream(ChatCompletionChunk) ∧
+    response_headers["Content-Type"] = "text/event-stream" ∧
+    ∀ chunk: ChatCompletionChunk • chunk ∈ result! ⟹
+      chunk.model = request_body.model ∧
+      last_chunk.choices[0].finish_reason ≠ null
+  
+  -- Error conditions
+  ¬server_reachable(endpoint.url) ⟹ throws(NetworkError)
+  http_status = 400 ⟹ throws(InvalidRequestError)
+  http_status = 401 ⟹ throws(AuthenticationError)
+  http_status = 429 ⟹ throws(RateLimitError)
+  http_status = 500 ⟹ throws(ServerError)
+  http_status = 503 ⟹ throws(ServiceUnavailableError)
+  request_timeout_exceeded() ⟹ throws(TimeoutError)
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 3: COGSERVER INTEGRATION
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ CogServerConnection ──────────────────────────────────────────────────────┐
+│ WebSocket connection to CogServer                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CogServerConnection]
+  host: seq char
+  port: ℕ
+  protocol: {ws, tcp}
+  reconnect: 𝔹
+  reconnectInterval: ℕ
+  connected: 𝔹
+  
+  -- Invariants
+  length(host) > 0
+  1 ≤ port ≤ 65535
+  reconnect = true ⟹ reconnectInterval > 0
+  
+  -- Connection URL
+  protocol = ws ⟹ 
+    connection_url = "ws://" ⌢ host ⌢ ":" ⌢ toString(port)
+
+┌─ CogServer_Connect ────────────────────────────────────────────────────────┐
+│ Contract: Establish WebSocket connection to CogServer                       │
+│ External API: WebSocket connection                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CogServer_Connect]
+  config: CogServerConnection
+  onConnected?: () → ()
+  onError?: (Error → ())
+  
+  -- Preconditions
+  ¬config.connected
+  server_listening(config.host, config.port)
+  
+  -- Operation
+  establish_websocket_connection(config.connection_url)
+  
+  -- Postconditions (on success)
+  config'.connected = true
+  onConnected ≠ null ⟹ onConnected()
+  
+  -- Auto-reconnect behavior
+  config.reconnect = true ∧ connection_lost() ⟹
+    wait(config.reconnectInterval) ∧
+    retry_connection()
+  
+  -- Error conditions
+  ¬server_listening(config.host, config.port) ⟹
+    config'.connected = false ∧
+    onError ≠ null ⟹ onError(ConnectionRefusedError)
+  
+  connection_timeout_exceeded() ⟹
+    config'.connected = false ∧
+    onError ≠ null ⟹ onError(TimeoutError)
+
+┌─ CogServer_ExecuteCommand ─────────────────────────────────────────────────┐
+│ Contract: Execute command in CogServer                                      │
+│ External API: Send command via WebSocket, receive response                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CogServer_ExecuteCommand]
+  connection: CogServerConnection
+  command: seq char
+  mode: {atomese, metta, scheme}
+  timeout: ℕ
+  result!: CogServerResponse
+  
+  -- Preconditions
+  connection.connected = true
+  length(command) > 0
+  timeout > 0
+  
+  -- Command format validation
+  mode = atomese ⟹ is_valid_atomese(command)
+  mode = metta ⟹ is_valid_metta(command)
+  mode = scheme ⟹ is_valid_scheme(command)
+  
+  -- Operation
+  send_websocket_message(connection, format_command(command, mode))
+  
+  -- Postconditions (on success)
+  result!.success = true
+  result!.timestamp = current_time()
+  result!.result ≠ null
+  
+  -- Error handling
+  response_timeout_exceeded(timeout) ⟹
+    result!.success = false ∧
+    result!.error = "Timeout waiting for response"
+  
+  invalid_command_syntax() ⟹
+    result!.success = false ∧
+    result!.error contains "Syntax error"
+  
+  server_error() ⟹
+    result!.success = false ∧
+    result!.error contains "Server error"
+
+┌─ CogServer_QueryAtomSpace ─────────────────────────────────────────────────┐
+│ Contract: Query the AtomSpace via CogServer                                 │
+│ External API: Execute query command, parse results                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[CogServer_QueryAtomSpace]
+  connection: CogServerConnection
+  query: seq char
+  result!: seq AtomNode
+  
+  -- Preconditions
+  connection.connected = true
+  length(query) > 0
+  is_valid_query(query)
+  
+  -- Operation
+  let response = CogServer_ExecuteCommand(
+    connection, query, mode := atomese, timeout := 5000)
+  
+  -- Postconditions (on success)
+  response.success = true ⟹
+    result! = parse_atomspace_response(response.result) ∧
+    ∀ atom: AtomNode • atom ∈ result! ⟹ is_well_formed_atom(atom)
+  
+  -- Error conditions
+  response.success = false ⟹
+    result! = ⟨⟩ ∧
+    throws(CogServerQueryError(response.error))
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 4: BROWSER API INTEGRATION
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ IndexedDB_StoreModel ─────────────────────────────────────────────────────┐
+│ Contract: Store model weights in IndexedDB                                  │
+│ External API: IndexedDB API                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[IndexedDB_StoreModel]
+  modelId: seq char
+  weights: seq byte
+  metadata: ModelMetadata
+  
+  -- Preconditions
+  length(modelId) > 0
+  length(weights) > 0
+  browser_supports_indexeddb()
+  
+  -- Storage quota check
+  available_storage() ≥ length(weights)
+  
+  -- Operation
+  open_database("webllm-cache")
+  create_object_store("models") if ¬exists
+  
+  -- Postconditions
+  model_exists_in_indexeddb(modelId)
+  retrieve_model(modelId).weights = weights
+  retrieve_model(modelId).metadata = metadata
+  
+  -- Error conditions
+  ¬browser_supports_indexeddb() ⟹ throws(IndexedDBNotSupportedError)
+  available_storage() < length(weights) ⟹ throws(QuotaExceededError)
+  database_operation_failed() ⟹ throws(IndexedDBError)
+
+┌─ IndexedDB_RetrieveModel ──────────────────────────────────────────────────┐
+│ Contract: Retrieve model weights from IndexedDB                             │
+│ External API: IndexedDB API                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[IndexedDB_RetrieveModel]
+  modelId: seq char
+  result!: ModelData ∪ null
+  
+  -- Preconditions
+  length(modelId) > 0
+  browser_supports_indexeddb()
+  
+  -- Operation
+  open_database("webllm-cache")
+  get_from_store("models", modelId)
+  
+  -- Postconditions
+  model_exists_in_indexeddb(modelId) ⟹
+    result! ≠ null ∧
+    result!.modelId = modelId ∧
+    length(result!.weights) > 0
+  
+  ¬model_exists_in_indexeddb(modelId) ⟹
+    result! = null
+  
+  -- Error conditions
+  database_operation_failed() ⟹ throws(IndexedDBError)
+
+┌─ WebGPU_Initialize ────────────────────────────────────────────────────────┐
+│ Contract: Initialize WebGPU adapter and device                              │
+│ External API: navigator.gpu.requestAdapter(), adapter.requestDevice()       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[WebGPU_Initialize]
+  preferredAdapter?: {powerPreference: {low-power, high-performance}}
+  result!: GPUDevice ∪ null
+  
+  -- Preconditions
+  browser_supports_webgpu()
+  
+  -- Operation
+  adapter = navigator.gpu.requestAdapter(preferredAdapter)
+  device = adapter.requestDevice()
+  
+  -- Postconditions (on success)
+  adapter ≠ null ∧ device ≠ null ⟹
+    result! = device ∧
+    device.limits.maxBufferSize > 0 ∧
+    device.limits.maxComputeWorkgroupSizeX > 0
+  
+  -- GPU device requirements for LLM inference
+  result! ≠ null ⟹
+    device.limits.maxStorageBufferBindingSize ≥ 1GB ∧
+    device.limits.maxBufferSize ≥ 256MB
+  
+  -- Error conditions
+  ¬browser_supports_webgpu() ⟹
+    result! = null ∧
+    throws(WebGPUNotSupportedError)
+  
+  adapter = null ⟹
+    result! = null ∧
+    throws(NoWebGPUAdapterError)
+
+┌─ LocalStorage_PersistState ────────────────────────────────────────────────┐
+│ Contract: Persist application state to LocalStorage                         │
+│ External API: localStorage.setItem()                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[LocalStorage_PersistState]
+  key: seq char
+  state: SystemState
+  
+  -- Preconditions
+  length(key) > 0
+  browser_supports_localstorage()
+  
+  -- Serialization
+  let serialized = JSON.stringify(state)
+  
+  -- Size check
+  length(serialized) ≤ LOCALSTORAGE_QUOTA
+  
+  -- Operation
+  localStorage.setItem(key, serialized)
+  
+  -- Postconditions
+  localStorage.getItem(key) = serialized
+  JSON.parse(localStorage.getItem(key)) = state
+  
+  -- Error conditions
+  ¬browser_supports_localstorage() ⟹ throws(LocalStorageNotSupportedError)
+  length(serialized) > LOCALSTORAGE_QUOTA ⟹ throws(QuotaExceededError)
+
+┌─ ServiceWorker_Register ───────────────────────────────────────────────────┐
+│ Contract: Register service worker for PWA functionality                     │
+│ External API: navigator.serviceWorker.register()                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ServiceWorker_Register]
+  scriptURL: seq char
+  scope?: seq char
+  result!: ServiceWorkerRegistration ∪ null
+  
+  -- Preconditions
+  browser_supports_serviceworker()
+  is_secure_context()  -- HTTPS or localhost
+  is_valid_url(scriptURL)
+  
+  -- Operation
+  registration = navigator.serviceWorker.register(scriptURL, {scope})
+  
+  -- Postconditions (on success)
+  registration ≠ null ⟹
+    result! = registration ∧
+    registration.active ≠ null ∨ registration.installing ≠ null
+  
+  -- Service worker lifecycle
+  registration.installing ≠ null ⟹
+    eventually(registration.active ≠ null)
+  
+  -- Error conditions
+  ¬browser_supports_serviceworker() ⟹
+    result! = null ∧
+    throws(ServiceWorkerNotSupportedError)
+  
+  ¬is_secure_context() ⟹
+    result! = null ∧
+    throws(SecurityError("Service workers require HTTPS"))
+  
+  invalid_script_url() ⟹
+    result! = null ∧
+    throws(NetworkError)
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 5: INTEGRATION INVARIANTS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ SystemIntegrationInvariants ──────────────────────────────────────────────┐
+│ Cross-cutting invariants across all integrations                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[SystemIntegrationInvariants]
+  systemState: SystemState
+  
+  -- WebLLM and MLC-LLM are mutually exclusive
+  mutual_exclusion:
+    ¬(systemState.webllmState.isGenerating ∧ 
+      systemState.mlcllmState.isGenerating)
+  
+  -- Client type consistency
+  client_consistency:
+    systemState.configStore.config.modelClientType = WEBLLM ⟹
+      systemState.webllmState.initialized = true ∧
+    systemState.configStore.config.modelClientType = MLCLLM_API ⟹
+      systemState.mlcllmState.connected = true
+  
+  -- Generation source consistency
+  generation_source:
+    systemState.chatStore.sessions[systemState.chatStore.currentSessionIndex]
+      .isGenerating ⟹
+      (systemState.webllmState.isGenerating ∨ 
+       systemState.mlcllmState.isGenerating)
+  
+  -- CogServer optional integration
+  cogserver_independence:
+    ∀ op: AgentOperation • 
+      op requires_cogserver() ⟹
+        systemState.orchestrationState.cogServer.connected = true ∨
+        use_mock_cogserver()
+  
+  -- Browser API availability
+  browser_compatibility:
+    systemState.configStore.config.modelClientType = WEBLLM ⟹
+      browser_supports_webgpu() ∧
+      browser_supports_indexeddb() ∧
+      browser_supports_serviceworker()
+  
+  -- Storage consistency
+  storage_integrity:
+    ∀ model: Model • model ∈ systemState.webllmState.modelCache ⟹
+      (model_exists_in_indexeddb(model) ∨ 
+       model_in_memory(model))
+  
+  -- State persistence consistency
+  persistence_consistency:
+    systemState persisted_in_localstorage() ⟹
+      JSON.parse(localStorage.getItem(STORAGE_KEY)) = systemState
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 6: ERROR HANDLING CONTRACTS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─ ErrorRecoveryStrategy ────────────────────────────────────────────────────┐
+│ Standard error recovery patterns across integrations                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+[ErrorRecoveryStrategy]
+  
+  -- Network errors: retry with exponential backoff
+  network_error_recovery:
+    ∀ err: NetworkError • 
+      retry_count < MAX_RETRIES ⟹
+        wait(BACKOFF_DELAY × 2^retry_count) ∧
+        retry_operation() ∧
+        retry_count' = retry_count + 1
+  
+  -- GPU errors: fallback to different model or reduce precision
+  gpu_error_recovery:
+    ∀ err: OutOfMemoryError •
+      try_smaller_model() ∨
+      reduce_context_window() ∨
+      notify_user("Insufficient GPU memory")
+  
+  -- Storage errors: use alternative storage or in-memory
+  storage_error_recovery:
+    ∀ err: QuotaExceededError •
+      clear_old_cached_models() ∨
+      use_cache_mode() ∨
+      notify_user("Storage quota exceeded")
+  
+  -- CogServer errors: use mock or disable feature
+  cogserver_error_recovery:
+    ∀ err: ConnectionRefusedError •
+      use_mock_cogserver() ∨
+      disable_opencog_features() ∨
+      notify_user("CogServer unavailable")
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 7: HELPER FUNCTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+[Helper Functions]
+  browser_supports_webgpu: → 𝔹
+  browser_supports_indexeddb: → 𝔹
+  browser_supports_serviceworker: → 𝔹
+  browser_supports_localstorage: → 𝔹
+  is_secure_context: → 𝔹
+  is_valid_url: seq char → 𝔹
+  is_valid_atomese: seq char → 𝔹
+  is_valid_metta: seq char → 𝔹
+  is_valid_scheme: seq char → 𝔹
+  is_valid_query: seq char → 𝔹
+  is_well_formed_atom: AtomNode → 𝔹
+  server_reachable: seq char → 𝔹
+  server_listening: seq char × ℕ → 𝔹
+  available_storage: → ℕ
+  estimated_model_size: Model → ℕ
+  model_loaded_in_webgpu: Model → 𝔹
+  model_exists_in_indexeddb: seq char → 𝔹
+  model_in_memory: Model → 𝔹
+  generation_in_progress: → 𝔹
+  context_length_exceeded: seq ChatCompletionMessageParam → 𝔹
+  gpu_out_of_memory: → 𝔹
+  parse_atomspace_response: any → seq AtomNode
+  format_command: seq char × {atomese, metta, scheme} → seq char
+
+[Constants]
+  PREBUILT_MODELS: ℙ Model
+  MAX_RETRIES: ℕ
+  BACKOFF_DELAY: ℕ
+  LOCALSTORAGE_QUOTA: ℕ
+  STORAGE_KEY: seq char
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF INTEGRATION CONTRACTS SPECIFICATION
+═══════════════════════════════════════════════════════════════════════════════
