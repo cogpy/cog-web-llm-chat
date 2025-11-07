@@ -97,20 +97,34 @@ const result = await executor.execute('!(+ 1 2)');
               </ul>
             </div>
             <div className={styles.visualDemo}>
-              <div className={styles.canvas}>
+              <div
+                className={styles.canvas}
+                role="img"
+                aria-label="Knowledge graph visualization showing Cat and Animal concepts with an Inheritance relationship"
+              >
                 <div
                   className={styles.node}
                   style={{ left: "20%", top: "30%" }}
+                  role="presentation"
+                  aria-label="Concept node: Cat"
                 >
                   Concept: Cat
                 </div>
                 <div
                   className={styles.node}
                   style={{ left: "60%", top: "30%" }}
+                  role="presentation"
+                  aria-label="Concept node: Animal"
                 >
                   Concept: Animal
                 </div>
-                <div className={styles.edgeLabel}>Inheritance</div>
+                <div
+                  className={styles.edgeLabel}
+                  role="presentation"
+                  aria-label="Inheritance link between Cat and Animal"
+                >
+                  Inheritance
+                </div>
               </div>
             </div>
           </div>
@@ -176,17 +190,35 @@ const result = await executor.execute('!(+ 1 2)');
               <div className={styles.pluginCard}>
                 <h4>PLN Reasoner</h4>
                 <p>Advanced probabilistic logic reasoning</p>
-                <div className={styles.rating}>⭐⭐⭐⭐⭐</div>
+                <div
+                  className={styles.rating}
+                  role="img"
+                  aria-label="Rating: 5 out of 5 stars"
+                >
+                  ⭐⭐⭐⭐⭐
+                </div>
               </div>
               <div className={styles.pluginCard}>
                 <h4>ECAN Attention</h4>
                 <p>Economic attention allocation network</p>
-                <div className={styles.rating}>⭐⭐⭐⭐☆</div>
+                <div
+                  className={styles.rating}
+                  role="img"
+                  aria-label="Rating: 4 out of 5 stars"
+                >
+                  ⭐⭐⭐⭐☆
+                </div>
               </div>
               <div className={styles.pluginCard}>
                 <h4>Pattern Miner</h4>
                 <p>Automated pattern discovery</p>
-                <div className={styles.rating}>⭐⭐⭐⭐⭐</div>
+                <div
+                  className={styles.rating}
+                  role="img"
+                  aria-label="Rating: 5 out of 5 stars"
+                >
+                  ⭐⭐⭐⭐⭐
+                </div>
               </div>
             </div>
           </div>

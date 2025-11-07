@@ -231,8 +231,14 @@ function getCurrentSessionId(): string {
 }
 
 function getCurrentUserId(): string {
+  // Use crypto.randomUUID() for secure ID generation in production
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return localStorage.getItem('userId') || 
+           `user-${crypto.randomUUID()}`;
+  }
+  // Fallback for older browsers (not cryptographically secure)
   return localStorage.getItem('userId') || 
-         `user-${Math.random().toString(36).substr(2, 9)}`;
+         `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
 function getCurrentUserName(): string {
