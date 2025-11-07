@@ -13,7 +13,7 @@ This example shows how to:
 ## Complete Setup Example
 
 ```typescript
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   getHyperonFFI, 
   getMettaExecutor, 
@@ -38,6 +38,10 @@ export function IntegratedOpenCogWorkspace() {
   const [collabReady, setCollabReady] = useState(false);
   const [activeUsers, setActiveUsers] = useState<number>(0);
   const [installedPlugins, setInstalledPlugins] = useState<string[]>([]);
+  
+  // Store managers in refs to reuse instances
+  const collabManagerRef = useRef<CollaborativeEditingManager | null>(null);
+  const syncManagerRef = useRef<any>(null);
 
   useEffect(() => {
     initializeWorkspace();
@@ -62,6 +66,7 @@ export function IntegratedOpenCogWorkspace() {
       conflictResolution: 'merge'
     });
     await sync.initialize();
+    syncManagerRef.current = sync;
 
     setHyperonReady(true);
     console.log('✓ Hyperon ready');
@@ -89,6 +94,8 @@ export function IntegratedOpenCogWorkspace() {
       }
     });
 
+    // Store collab manager for reuse
+    collabManagerRef.current = collab;
     setCollabReady(true);
     console.log('✓ Collaboration ready');
 
@@ -124,23 +131,14 @@ export function IntegratedOpenCogWorkspace() {
   function handleAtomsChange(newAtoms: AtomNode[]) {
     setAtoms(newAtoms);
     
-    // Sync to Hyperon if ready
-    if (hyperonReady) {
-      const sync = getAtomSpaceSynchronizer();
-      newAtoms.forEach(atom => sync.addLocalAtom(atom));
+    // Sync to Hyperon if ready (reuse stored sync manager)
+    if (hyperonReady && syncManagerRef.current) {
+      newAtoms.forEach(atom => syncManagerRef.current.addLocalAtom(atom));
     }
 
-    // Broadcast to collaborators if ready
-    if (collabReady) {
-      // Broadcast the change
-      const collab = new CollaborativeEditingManager({
-        serverUrl: process.env.COLLAB_SERVER_URL || 'ws://localhost:8080/collab',
-        sessionId: getCurrentSessionId(),
-        userId: getCurrentUserId(),
-        userName: getCurrentUserName()
-      });
-      
-      collab.makeEdit({
+    // Broadcast to collaborators if ready (reuse stored collab manager)
+    if (collabReady && collabManagerRef.current) {
+      collabManagerRef.current.makeEdit({
         id: `edit-${Date.now()}`,
         userId: getCurrentUserId(),
         timestamp: Date.now(),
